@@ -1,0 +1,28 @@
+{
+  "name": "routeflow",
+  "version": "0.1.0",
+  "description": "A route planner that explains its reasoning, not just its route.",
+  "main": "server/app.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "test": "jest",
+    "lint": "eslint ."
+  },
+  "keywords": [
+    "route-planning",
+    "tsp",
+    "constraints",
+    "multi-objective"
+  ],
+  "author": "Shaarav S (24BYB0118)",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.19.2",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
+}
