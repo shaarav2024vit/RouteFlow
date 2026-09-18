@@ -8,6 +8,8 @@
   },
   "scripts": {
     "test": "jest",
+    "start": "node server/server.js",
+    "dev": "nodemon server/server.js",
     "lint": "eslint ."
   },
   "keywords": [
@@ -19,6 +21,7 @@
   "author": "Shaarav S (24BYB0118)",
   "license": "ISC",
   "dependencies": {
+    "better-sqlite3": "^13.0.3",
     "express": "^4.19.2",
     "uuid": "^9.0.1"
   },
