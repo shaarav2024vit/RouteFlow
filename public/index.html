@@ -20,7 +20,7 @@
       </div>
     </div>
     <div class="header-actions">
-      <button id="btn-sample-data" class="btn btn-primary">✨ <span>Sample Trip</span></button>
+      <button id="btn-sample-data" class="btn btn-primary">🌍 <span>Load Trip</span></button>
       <button id="btn-save-trip"   class="btn">💾 <span>Save</span></button>
       <button id="btn-load-trip"   class="btn">📂 <span>Reload</span></button>
       <button id="btn-clear-all"   class="btn btn-danger">🗑️ <span>Clear</span></button>
@@ -68,7 +68,22 @@
         <div id="violation-container"></div>
       </section>
 
-      <!-- ② Strategy Presets -->
+      <!-- ② Sample World Trips -->
+      <section class="card">
+        <div class="card-title">
+          <span>Sample World Trips</span>
+          <span style="font-size:0.65rem;color:var(--text-muted);text-transform:none;letter-spacing:0">Click to load</span>
+        </div>
+        <div class="trip-region-tabs" id="trip-region-tabs">
+          <button class="region-tab active" data-region="asia">🌏 Asia</button>
+          <button class="region-tab" data-region="europe">🌍 Europe</button>
+          <button class="region-tab" data-region="americas">🌎 Americas</button>
+          <button class="region-tab" data-region="other">✈️ More</button>
+        </div>
+        <div id="trip-cards-grid" class="trip-cards-grid"></div>
+      </section>
+
+      <!-- ③ Strategy Presets -->
       <section class="card">
         <div class="card-title">
           <span>Strategy</span>
