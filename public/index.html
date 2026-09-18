@@ -3,108 +3,185 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RouteFlow — Multi-Objective Route Planner</title>
-  <meta name="description" content="A route planner that explains its reasoning, not just its route. Multi-objective TSP sequencing with constraint-aware local search.">
+  <title>RouteFlow — Smart Multi-Objective Route Planner</title>
+  <meta name="description" content="A multi-stop route sequencing engine that explains its reasoning, balancing travel time, opening hours, precedence rules, weather, and crowds.">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
+
+  <!-- ── HEADER ────────────────────────────────────────────── -->
   <header>
     <div class="logo-group">
-      <h1>RouteFlow</h1>
-      <p>A route planner that explains its reasoning, not just its route</p>
+      <div class="logo-icon">RF</div>
+      <div>
+        <div class="logo-title">RouteFlow</div>
+        <div class="logo-tagline">Explaining reasoning, not just routes</div>
+      </div>
     </div>
     <div class="header-actions">
-      <button id="btn-sample-data" class="btn btn-primary">✨ Load Sample Trip</button>
-      <button id="btn-save-trip" class="btn">💾 Save Trip</button>
-      <button id="btn-load-trip" class="btn">📂 Reload Saved</button>
+      <button id="btn-sample-data" class="btn btn-primary">✨ <span>Sample Trip</span></button>
+      <button id="btn-save-trip"   class="btn">💾 <span>Save</span></button>
+      <button id="btn-load-trip"   class="btn">📂 <span>Reload</span></button>
+      <button id="btn-clear-all"   class="btn btn-danger">🗑️ <span>Clear</span></button>
     </div>
   </header>
 
+  <!-- ── MAIN LAYOUT ───────────────────────────────────────── -->
   <div class="app-layout">
-    <div id="map-container"></div>
 
+    <!-- Map area -->
+    <div id="map-container">
+      <div class="map-toast" id="map-toast">
+        <div class="dot"></div>
+        <span>Click anywhere on the map to add a destination</span>
+      </div>
+      <div id="route-spinner">
+        <div class="spin-ring"></div>
+        <span>Computing optimal route…</span>
+      </div>
+    </div>
+
+    <!-- Sidebar -->
     <aside class="sidebar">
-      <!-- Route Metrics Overview -->
-      <section class="card">
-        <h3>Route Summary</h3>
+
+      <!-- ① Route Metrics -->
+      <section class="card" id="card-metrics">
+        <div class="card-title">
+          <span>Route Metrics</span>
+          <span id="badge-status" class="badge">Ready</span>
+        </div>
         <div class="stat-grid">
           <div class="stat-box">
-            <div id="stat-dist" class="stat-val">0.0 km</div>
+            <div id="stat-dist" class="stat-val">—</div>
             <div class="stat-lbl">Distance</div>
           </div>
           <div class="stat-box">
-            <div id="stat-time" class="stat-val">0 min</div>
+            <div id="stat-time" class="stat-val">—</div>
             <div class="stat-lbl">Duration</div>
           </div>
           <div class="stat-box">
-            <div id="stat-score" class="stat-val">0</div>
-            <div class="stat-lbl">Objective Score</div>
+            <div id="stat-score" class="stat-val">—</div>
+            <div class="stat-lbl">Score</div>
           </div>
         </div>
         <div id="violation-container"></div>
       </section>
 
-      <!-- Presets Selector -->
+      <!-- ② Strategy Presets -->
       <section class="card">
-        <h3>Strategy Presets</h3>
+        <div class="card-title">
+          <span>Strategy</span>
+          <span class="badge" id="badge-preset">Fastest</span>
+        </div>
         <div id="preset-container" class="preset-pills">
           <button class="pill-btn active" data-preset="Fastest">⚡ Fastest</button>
-          <button class="pill-btn" data-preset="Best Scenic">🌲 Best Scenic</button>
-          <button class="pill-btn" data-preset="Least Crowded">👥 Least Crowded</button>
-          <button class="pill-btn" data-preset="Most Attractions Open">🏛️ Open Attractions</button>
+          <button class="pill-btn" data-preset="Best Scenic">🌲 Scenic</button>
+          <button class="pill-btn" data-preset="Least Crowded">👥 Low Crowds</button>
+          <button class="pill-btn" data-preset="Most Attractions Open">🏛️ Open Venues</button>
         </div>
       </section>
 
-      <!-- Multi-Objective Weight Sliders -->
+      <!-- ③ Multi-Objective Weight Sliders -->
       <section class="card">
-        <h3>Objective Weights</h3>
+        <div class="card-title"><span>Multi-Objective Weights</span></div>
         <div id="slider-panel" class="slider-group">
           <div class="slider-row">
-            <div class="slider-label"><span>Travel Time Efficiency</span><span id="val-travelTime">1.0</span></div>
+            <div class="slider-label"><span>Travel Time Efficiency</span><span id="val-travelTime" class="slider-val">1.00</span></div>
             <input type="range" id="slider-travelTime" min="0" max="1" step="0.05" value="1.0">
           </div>
           <div class="slider-row">
-            <div class="slider-label"><span>Time Window Fit</span><span id="val-timeWindow">0.5</span></div>
+            <div class="slider-label"><span>Time Window Adherence</span><span id="val-timeWindow" class="slider-val">0.50</span></div>
             <input type="range" id="slider-timeWindow" min="0" max="1" step="0.05" value="0.5">
           </div>
           <div class="slider-row">
-            <div class="slider-label"><span>Scenic Value</span><span id="val-scenic">0.1</span></div>
+            <div class="slider-label"><span>Scenic Value</span><span id="val-scenic" class="slider-val">0.10</span></div>
             <input type="range" id="slider-scenic" min="0" max="1" step="0.05" value="0.1">
           </div>
           <div class="slider-row">
-            <div class="slider-label"><span>Crowd Avoidance</span><span id="val-crowd">0.1</span></div>
+            <div class="slider-label"><span>Crowd Avoidance</span><span id="val-crowd" class="slider-val">0.10</span></div>
             <input type="range" id="slider-crowd" min="0" max="1" step="0.05" value="0.1">
           </div>
           <div class="slider-row">
-            <div class="slider-label"><span>Weather Quality</span><span id="val-weather">0.1</span></div>
+            <div class="slider-label"><span>Weather Quality</span><span id="val-weather" class="slider-val">0.10</span></div>
             <input type="range" id="slider-weather" min="0" max="1" step="0.05" value="0.1">
           </div>
           <div class="slider-row">
-            <div class="slider-label"><span>User Time Preference</span><span id="val-preference">0.2</span></div>
+            <div class="slider-label"><span>User Time Preference</span><span id="val-preference" class="slider-val">0.20</span></div>
             <input type="range" id="slider-preference" min="0" max="1" step="0.05" value="0.2">
           </div>
         </div>
       </section>
 
-      <!-- Score Breakdown Inspector Card -->
+      <!-- ④ Score Breakdown -->
       <section class="card">
-        <h3>Score Decomposition (Explainability)</h3>
-        <div id="factor-bars-container" class="factor-bars">
-          <!-- Dynamically populated -->
+        <div class="card-title"><span>Score Breakdown</span><span style="font-size:0.65rem;color:var(--text-muted);text-transform:none;letter-spacing:0">Explainability</span></div>
+        <div id="factor-bars-container" class="factor-bars"></div>
+      </section>
+
+      <!-- ⑤ Itinerary Stops -->
+      <section class="card">
+        <div class="card-title">
+          <span>Itinerary</span>
+          <span id="badge-count" class="badge">0 Stops</span>
+        </div>
+        <div id="stops-container" class="stop-list">
+          <div class="empty-state">
+            <span class="icon">📍</span>
+            Click on the map to add your first stop
+          </div>
         </div>
       </section>
 
-      <!-- Itinerary Stops List -->
-      <section class="card">
-        <h3>Stops (Click map to add)</h3>
-        <div id="stops-container" class="stop-list">
-          <!-- Dynamically populated -->
-        </div>
-      </section>
     </aside>
   </div>
 
+  <!-- ── MODAL: Add Stop ─────────────────────────────────── -->
+  <div id="modal-add-stop" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-stop-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h4 id="modal-stop-title"><span class="modal-icon">📍</span>Add New Stop</h4>
+        <button id="btn-modal-close" class="btn-icon" aria-label="Close">✕</button>
+      </div>
+      <div class="form-group">
+        <label for="input-stop-name">Stop Name</label>
+        <input type="text" id="input-stop-name" class="form-control" placeholder="e.g. National Gallery" autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label>Coordinates</label>
+        <input type="text" id="input-stop-coords" class="form-control" readonly>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-modal-cancel" class="btn btn-ghost">Cancel</button>
+        <button id="btn-modal-confirm" class="btn btn-primary">Add to Itinerary →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── MODAL: Opening Hours ────────────────────────────── -->
+  <div id="modal-hours" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-hours-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h4 id="modal-hours-title"><span class="modal-icon">🕐</span>Venue Opening Hours</h4>
+        <button id="btn-hours-close" class="btn-icon" aria-label="Close">✕</button>
+      </div>
+      <p id="modal-hours-stopname" style="font-size:0.8rem;color:var(--text-dim);margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border)"></p>
+      <div class="form-group">
+        <label for="input-hours-open">Opening Time</label>
+        <input type="time" id="input-hours-open" class="form-control" value="10:00">
+      </div>
+      <div class="form-group">
+        <label for="input-hours-close">Closing Time</label>
+        <input type="time" id="input-hours-close" class="form-control" value="17:00">
+      </div>
+      <div class="modal-footer">
+        <button id="btn-hours-cancel" class="btn btn-ghost">Cancel</button>
+        <button id="btn-hours-confirm" class="btn btn-primary">Attach Constraint →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SCRIPTS ─────────────────────────────────────────── -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script src="/js/mapRenderer.js"></script>
   <script src="/js/weightSliderPanel.js"></script>
