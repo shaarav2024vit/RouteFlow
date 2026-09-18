@@ -62,6 +62,45 @@ document.addEventListener('DOMContentLoaded', () => {
     alert('Saved trip reloaded from SQLite!');
   });
 
+  // Load sample itinerary button
+  document.getElementById('btn-sample-data')?.addEventListener('click', async () => {
+    const sampleStops = [
+      { name: 'Cubbon Park', lat: 12.9763, lon: 77.5929 },
+      { name: 'Visvesvaraya Museum', lat: 12.9752, lon: 77.5963 },
+      { name: 'Commercial Street', lat: 12.9822, lon: 77.6083 },
+      { name: 'Lalbagh Botanical Garden', lat: 12.9507, lon: 77.5848 },
+      { name: 'UB City', lat: 12.9719, lon: 77.5958 },
+    ];
+
+    for (const stop of sampleStops) {
+      await fetch('/api/stops', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(stop),
+      });
+    }
+    await syncState();
+  });
+
+  window.addOpeningHoursPrompt = async function(stopId) {
+    const openTime = prompt('Enter opening time (HH:mm):', '10:00');
+    if (!openTime) return;
+    const closeTime = prompt('Enter closing time (HH:mm):', '17:00');
+    if (!closeTime) return;
+
+    const res = await fetch(`/api/stops/${stopId}/constraints`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'OPENING_HOURS', openTime, closeTime }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(`Error: ${data.error}`);
+    } else {
+      await syncState();
+    }
+  };
+
   async function addStop(name, lat, lon) {
     await fetch('/api/stops', {
       method: 'POST',
