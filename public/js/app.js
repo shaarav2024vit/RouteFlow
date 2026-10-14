@@ -257,12 +257,20 @@ const WORLD_TRIPS = {
  * ═══════════════════════════════════════════════════════════════════*/
 document.addEventListener('DOMContentLoaded', () => {
   /* ── STATE ──────────────────────────────────────────────────────*/
-  let pendingLat           = null;
-  let pendingLon           = null;
-  let pendingHoursStopId   = null;
-  let pendingHoursStopName = null;
-  let currentStops         = [];
-  let activeRegion         = 'asia';
+  let pendingLat                = null;
+  let pendingLon                = null;
+  let pendingHoursStopId        = null;
+  let pendingHoursStopName      = null;
+  let pendingPrecedenceStopId   = null;
+  let pendingPrecedenceStopName = null;
+  let currentStops              = [];
+  let currentTripConfig         = { startTime: '09:00', startLat: 12.9716, startLon: 77.5946 };
+  let currentTransitMode        = 'driving';
+  let isRoundTripActive         = false;
+  let activeRegion              = 'asia';
+  let originalAiRouteStats      = null;
+  let isManualReordered         = false;
+  let lastReport                = null;
 
   /* ── MODAL HELPERS ──────────────────────────────────────────────*/
   function openModal(id)  { document.getElementById(id)?.classList.add('open'); }
@@ -293,9 +301,16 @@ document.addEventListener('DOMContentLoaded', () => {
       setTimeout(() => (inputName.style.borderColor = ''), 1200);
       return;
     }
+    const prefStart = document.getElementById('input-pref-start')?.value || null;
+    const prefEnd   = document.getElementById('input-pref-end')?.value || null;
+    const dwellMin  = Number(document.getElementById('input-stop-dwell')?.value || 30);
     closeModal('modal-add-stop');
-    await addStop(name, pendingLat, pendingLon);
+    await addStop(name, pendingLat, pendingLon, prefStart, prefEnd, dwellMin);
     inputName.value = '';
+    const ps = document.getElementById('input-pref-start');
+    if (ps) ps.value = '';
+    const pe = document.getElementById('input-pref-end');
+    if (pe) pe.value = '';
   });
   inputName?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') document.getElementById('btn-modal-confirm').click();
@@ -319,7 +334,256 @@ document.addEventListener('DOMContentLoaded', () => {
     else await syncState();
   });
 
-  /* ── GLOBAL HELPERS (called from map popups) ────────────────────*/
+  /* ── PRECEDENCE RULE MODAL ──────────────────────────────────────*/
+  document.getElementById('btn-precedence-close')?.addEventListener('click',  () => closeModal('modal-precedence'));
+  document.getElementById('btn-precedence-cancel')?.addEventListener('click', () => closeModal('modal-precedence'));
+
+  document.getElementById('btn-precedence-confirm')?.addEventListener('click', async () => {
+    const select = document.getElementById('select-precedes-stop');
+    const precedesStopId = select?.value;
+    if (!precedesStopId) {
+      showToast('⚠️ Please select a target stop', 'warning');
+      return;
+    }
+    closeModal('modal-precedence');
+    const res = await fetch(`/api/stops/${pendingPrecedenceStopId}/constraints`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'PRECEDENCE', precedesStopId }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(`⚠️ ${data.error}`, 'warning');
+    } else {
+      showToast('🔀 Precedence order rule attached!');
+      await syncState();
+    }
+  });
+
+  /* ── SAVE TRIP MODAL ────────────────────────────────────────────*/
+  document.getElementById('btn-save-close')?.addEventListener('click',  () => closeModal('modal-save-trip'));
+  document.getElementById('btn-save-cancel')?.addEventListener('click', () => closeModal('modal-save-trip'));
+
+  document.getElementById('btn-save-confirm')?.addEventListener('click', async () => {
+    const inputTripName = document.getElementById('input-save-trip-name');
+    const tripName = inputTripName?.value.trim() || `Trip-${new Date().toLocaleDateString()}`;
+    closeModal('modal-save-trip');
+    const res = await fetch('/api/trip/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tripId: tripName }),
+    });
+    const data = await res.json();
+    showToast(data.message || `✅ Saved "${tripName}" to SQLite`);
+  });
+
+  /* ── MY TRIPS MODAL ─────────────────────────────────────────────*/
+  document.getElementById('btn-trips-close')?.addEventListener('click', () => closeModal('modal-my-trips'));
+  document.getElementById('btn-trips-done')?.addEventListener('click',  () => closeModal('modal-my-trips'));
+
+  async function openMyTripsModal() {
+    const listEl = document.getElementById('trips-list-container');
+    if (!listEl) return;
+    listEl.innerHTML = '<div style="color:var(--text-muted);font-size:0.8rem;text-align:center;padding:20px 0">Loading saved trips…</div>';
+    openModal('modal-my-trips');
+
+    try {
+      const res = await fetch('/api/trips');
+      const data = await res.json();
+      const trips = data.trips || [];
+      if (trips.length === 0) {
+        listEl.innerHTML = '<div style="color:var(--text-muted);font-size:0.8rem;text-align:center;padding:24px 0">No saved trips yet. Save your current itinerary!</div>';
+        return;
+      }
+
+      listEl.innerHTML = trips.map((t) => {
+        const dateStr = t.createdAt ? new Date(t.createdAt).toLocaleDateString() : '';
+        const distStr = t.totalDistance != null ? `${Number(t.totalDistance).toFixed(1)} km` : '';
+        const timeStr = t.totalTime != null ? `${Number(t.totalTime).toFixed(0)} min` : '';
+        const metaParts = [`${t.stopCount || 0} stops`, distStr, timeStr, dateStr].filter(Boolean).join(' · ');
+
+        return `
+          <div class="saved-trip-card">
+            <div>
+              <div class="st-title">📍 ${escHtml(t.tripId)}</div>
+              <div class="st-meta">${metaParts}</div>
+            </div>
+            <div class="st-actions">
+              <button class="btn-sm btn-sm-primary" onclick="window.loadSavedTripById('${escHtml(t.tripId)}')">Load</button>
+              <button class="btn-sm btn-sm-danger" onclick="window.deleteSavedTripById('${escHtml(t.tripId)}')">✕</button>
+            </div>
+          </div>`;
+      }).join('');
+    } catch {
+      listEl.innerHTML = '<div style="color:var(--danger);font-size:0.8rem;text-align:center;padding:20px 0">Failed to load saved trips</div>';
+    }
+  }
+
+  window.loadSavedTripById = async function (tripId) {
+    closeModal('modal-my-trips');
+    showSpinner(true);
+    const res = await fetch(`/api/trip/load/${encodeURIComponent(tripId)}`);
+    if (!res.ok) {
+      showToast('⚠️ Could not load trip', 'warning');
+      showSpinner(false);
+      return;
+    }
+    const data = await res.json();
+    isManualReordered = false;
+    document.getElementById('ai-comparison-banner')?.classList.add('hidden');
+    await syncState();
+    if (data.trip?.stops?.[0]) {
+      mapRenderer.flyTo(data.trip.stops[0].lat, data.trip.stops[0].lon, 13);
+    }
+    showToast(`📂 Loaded trip: ${tripId}`);
+  };
+
+  window.deleteSavedTripById = async function (tripId) {
+    if (!confirm(`Delete saved trip "${tripId}"?`)) return;
+    await fetch(`/api/trip/${encodeURIComponent(tripId)}`, { method: 'DELETE' });
+    showToast(`🗑️ Deleted ${tripId}`);
+    openMyTripsModal();
+  };
+
+  /* ── EXPORT MODAL ───────────────────────────────────────────────*/
+  document.getElementById('btn-export-close')?.addEventListener('click', () => closeModal('modal-export'));
+  document.getElementById('btn-export-done')?.addEventListener('click',  () => closeModal('modal-export'));
+
+  function buildGoogleMapsUrl() {
+    if (!currentStops.length) return null;
+    if (currentStops.length === 1) {
+      return `https://www.google.com/maps/search/?api=1&query=${currentStops[0].lat},${currentStops[0].lon}`;
+    }
+    const origin = `${currentStops[0].lat},${currentStops[0].lon}`;
+    const destination = isRoundTripActive
+      ? origin
+      : `${currentStops[currentStops.length - 1].lat},${currentStops[currentStops.length - 1].lon}`;
+    const intermediateStops = isRoundTripActive
+      ? currentStops.slice(1)
+      : currentStops.slice(1, -1);
+    const waypoints = intermediateStops.map((s) => `${s.lat},${s.lon}`).join('|');
+    const mode = currentTransitMode === 'walking' ? 'walking' : currentTransitMode === 'cycling' ? 'bicycling' : 'driving';
+
+    let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=${mode}`;
+    if (waypoints) url += `&waypoints=${waypoints}`;
+    return url;
+  }
+
+  function buildMarkdownItinerary() {
+    if (!currentStops.length) return 'No stops in itinerary.';
+    const lines = [
+      `# RouteFlow Itinerary Summary`,
+      `Total Stops: ${currentStops.length}`,
+      `Total Distance: ${lastReport ? lastReport.totalDistanceKm : 0} km`,
+      `Total Duration: ${lastReport ? lastReport.totalTravelTimeMin : 0} mins`,
+      `Departure Time: ${currentTripConfig.startTime || '09:00'}`,
+      `Transit Mode: ${currentTransitMode.toUpperCase()}`,
+      `Round Trip: ${isRoundTripActive ? 'Yes' : 'No'}`,
+      '',
+      `## Scheduled Sequence:`,
+    ];
+
+    currentStops.forEach((s, idx) => {
+      const arr = s.scheduledArrival || '—';
+      const dep = s.scheduledDeparture || arr;
+      const dwell = s.dwellMin || 30;
+      lines.push(`${idx + 1}. **${s.name}**`);
+      lines.push(`   - 🕐 Arrive: ${arr} | Depart: ${dep} (${dwell}m visit)`);
+      lines.push(`   - 📍 Coordinates: ${s.lat.toFixed(5)}, ${s.lon.toFixed(5)}`);
+      if (s.reasoning && s.reasoning.length > 0) {
+        lines.push(`   - 💡 Reasoning: ${s.reasoning.join('; ')}`);
+      }
+    });
+
+    return lines.join('\n');
+  }
+
+  function openExportModal() {
+    const preview = document.getElementById('export-preview-text');
+    if (preview) preview.value = buildMarkdownItinerary();
+    openModal('modal-export');
+  }
+
+  document.getElementById('btn-export-gmaps')?.addEventListener('click', () => {
+    const url = buildGoogleMapsUrl();
+    if (!url) { showToast('⚠️ Add stops first to navigate', 'warning'); return; }
+    window.open(url, '_blank');
+  });
+
+  document.getElementById('btn-nav-gmaps')?.addEventListener('click', () => {
+    const url = buildGoogleMapsUrl();
+    if (!url) { showToast('⚠️ Add stops first to navigate', 'warning'); return; }
+    window.open(url, '_blank');
+  });
+
+  document.getElementById('btn-export-copy')?.addEventListener('click', () => {
+    const text = buildMarkdownItinerary();
+    navigator.clipboard.writeText(text).then(() => {
+      showToast('📋 Itinerary copied to clipboard!');
+    }).catch(() => {
+      showToast('⚠️ Clipboard copy failed', 'warning');
+    });
+  });
+
+  document.getElementById('btn-export-gpx')?.addEventListener('click', () => {
+    if (!currentStops.length) return;
+    let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="RouteFlow">\n  <metadata><name>RouteFlow Itinerary</name></metadata>\n`;
+    currentStops.forEach((s) => {
+      gpx += `  <wpt lat="${s.lat}" lon="${s.lon}"><name>${escHtml(s.name)}</name></wpt>\n`;
+    });
+    gpx += `  <rte>\n    <name>RouteFlow Optimized Tour</name>\n`;
+    currentStops.forEach((s) => {
+      gpx += `    <rtept lat="${s.lat}" lon="${s.lon}"><name>${escHtml(s.name)}</name></rtept>\n`;
+    });
+    if (isRoundTripActive && currentStops.length > 1) {
+      gpx += `    <rtept lat="${currentStops[0].lat}" lon="${currentStops[0].lon}"><name>${escHtml(currentStops[0].name)}</name></rtept>\n`;
+    }
+    gpx += `  </rte>\n</gpx>`;
+
+    const blob = new Blob([gpx], { type: 'application/gpx+xml' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `routeflow-itinerary-${Date.now()}.gpx`;
+    a.click();
+    showToast('📁 GPX file downloaded');
+  });
+
+  document.getElementById('btn-export-geojson')?.addEventListener('click', () => {
+    if (!currentStops.length) return;
+    const features = currentStops.map((s, idx) => ({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [s.lon, s.lat] },
+      properties: {
+        sequence: idx + 1,
+        name: s.name,
+        scheduledArrival: s.scheduledArrival,
+        scheduledDeparture: s.scheduledDeparture,
+      },
+    }));
+
+    const coords = currentStops.map((s) => [s.lon, s.lat]);
+    if (isRoundTripActive && currentStops.length > 1) coords.push([currentStops[0].lon, currentStops[0].lat]);
+
+    features.push({
+      type: 'Feature',
+      geometry: { type: 'LineString', coordinates: coords },
+      properties: { name: 'RouteFlow Sequence' },
+    });
+
+    const geojson = { type: 'FeatureCollection', features };
+    const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: 'application/geo+json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `routeflow-itinerary-${Date.now()}.geojson`;
+    a.click();
+    showToast('🌐 GeoJSON file downloaded');
+  });
+
+  document.getElementById('btn-export-print')?.addEventListener('click', () => {
+    window.print();
+  });
+
+  /* ── GLOBAL HELPERS (called from popups & stop list) ────────────*/
   window.addOpeningHoursPrompt = function (stopId) {
     const stop = currentStops.find((s) => s.id === stopId);
     pendingHoursStopId   = stopId;
@@ -331,9 +595,85 @@ document.addEventListener('DOMContentLoaded', () => {
     openModal('modal-hours');
   };
 
+  window.addPrecedencePrompt = function (stopId) {
+    const stop = currentStops.find((s) => s.id === stopId);
+    const otherStops = currentStops.filter((s) => s.id !== stopId);
+    if (otherStops.length === 0) {
+      showToast('⚠️ Add another stop first to configure a precedence rule', 'warning');
+      return;
+    }
+    pendingPrecedenceStopId   = stopId;
+    pendingPrecedenceStopName = stop?.name || stopId;
+    const label = document.getElementById('modal-precedence-stopname');
+    if (label) label.textContent = `Rule for: ${pendingPrecedenceStopName}`;
+
+    const select = document.getElementById('select-precedes-stop');
+    if (select) {
+      select.innerHTML = otherStops
+        .map((s, idx) => `<option value="${s.id}">Stop #${idx + 1}: ${escHtml(s.name)}</option>`)
+        .join('');
+    }
+    openModal('modal-precedence');
+  };
+
+  window.removeConstraint = async function (stopId, constraintId) {
+    const res = await fetch(`/api/stops/${stopId}/constraints/${constraintId}`, {
+      method: 'DELETE',
+    });
+    if (res.ok) {
+      showToast('🗑️ Constraint removed');
+      await syncState();
+    }
+  };
+
   window.removeStop = async function (id) {
     await fetch(`/api/stops/${id}`, { method: 'DELETE' });
     await syncState();
+  };
+
+  /* ── MANUAL REORDER (MOVE UP / DOWN) ───────────────────────────*/
+  window.moveStopUp = async function (index) {
+    if (index <= 0 || index >= currentStops.length) return;
+    const stopIds = currentStops.map((s) => s.id);
+    const temp = stopIds[index];
+    stopIds[index] = stopIds[index - 1];
+    stopIds[index - 1] = temp;
+    await applyManualReorder(stopIds);
+  };
+
+  window.moveStopDown = async function (index) {
+    if (index < 0 || index >= currentStops.length - 1) return;
+    const stopIds = currentStops.map((s) => s.id);
+    const temp = stopIds[index];
+    stopIds[index] = stopIds[index + 1];
+    stopIds[index + 1] = temp;
+    await applyManualReorder(stopIds);
+  };
+
+  async function applyManualReorder(orderedStopIds) {
+    showSpinner(true);
+    isManualReordered = true;
+    await fetch('/api/stops/reorder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderedStopIds }),
+    });
+    await syncState();
+    showToast('↕️ Stops manually reordered');
+  }
+
+  window.reoptimizeRoute = async function () {
+    showSpinner(true);
+    isManualReordered = false;
+    document.getElementById('ai-comparison-banner')?.classList.add('hidden');
+    const activePreset = presetSelector?.getActive?.() || 'Fastest';
+    await fetch('/api/presets/select', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ presetName: activePreset }),
+    });
+    await syncState();
+    showToast('⚡ Route re-optimized with RouteFlow AI');
   };
 
   /* ── MAP RENDERER ───────────────────────────────────────────────*/
@@ -356,8 +696,157 @@ document.addEventListener('DOMContentLoaded', () => {
     },
   });
 
+  /* ── PLACE SEARCH (OpenStreetMap Nominatim) ─────────────────────*/
+  const inputSearch = document.getElementById('input-map-search');
+  const searchResultsDropdown = document.getElementById('search-results-dropdown');
+  const btnSearchClear = document.getElementById('btn-search-clear');
+  let searchDebounceTimer = null;
+
+  inputSearch?.addEventListener('input', () => {
+    const q = inputSearch.value.trim();
+    btnSearchClear?.classList.toggle('hidden', !q);
+    clearTimeout(searchDebounceTimer);
+    if (!q || q.length < 2) {
+      if (searchResultsDropdown) searchResultsDropdown.classList.add('hidden');
+      return;
+    }
+    searchDebounceTimer = setTimeout(async () => {
+      try {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=5&addressdetails=1`;
+        const res = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+        if (!res.ok) return;
+        const results = await res.json();
+        renderSearchResults(results);
+      } catch {
+        // network or rate limit
+      }
+    }, 350);
+  });
+
+  btnSearchClear?.addEventListener('click', () => {
+    if (inputSearch) inputSearch.value = '';
+    btnSearchClear.classList.add('hidden');
+    searchResultsDropdown?.classList.add('hidden');
+  });
+
+  function renderSearchResults(results) {
+    if (!searchResultsDropdown) return;
+    if (!results || results.length === 0) {
+      searchResultsDropdown.innerHTML = '<div style="padding:10px 14px;font-size:0.75rem;color:var(--text-muted)">No matching places found</div>';
+      searchResultsDropdown.classList.remove('hidden');
+      return;
+    }
+
+    searchResultsDropdown.innerHTML = results.map((r) => {
+      const parts = r.display_name.split(',');
+      const title = parts[0];
+      const desc = parts.slice(1, 4).join(',').trim();
+      const icon = r.type === 'city' || r.type === 'administrative' ? '🏙️' : r.class === 'tourism' ? '🏛️' : '📍';
+      return `
+        <div class="search-result-item" data-lat="${r.lat}" data-lon="${r.lon}" data-name="${escHtml(title)}">
+          <span class="sr-icon">${icon}</span>
+          <div class="sr-text">
+            <div class="sr-title">${escHtml(title)}</div>
+            <div class="sr-desc">${escHtml(desc)}</div>
+          </div>
+        </div>`;
+    }).join('');
+
+    searchResultsDropdown.classList.remove('hidden');
+
+    searchResultsDropdown.querySelectorAll('.search-result-item').forEach((item) => {
+      item.addEventListener('click', () => {
+        const lat = parseFloat(item.dataset.lat);
+        const lon = parseFloat(item.dataset.lon);
+        const name = item.dataset.name;
+        searchResultsDropdown.classList.add('hidden');
+        if (inputSearch) inputSearch.value = name;
+        mapRenderer.showSearchResult(lat, lon, name, async (stopName, stopLat, stopLon) => {
+          await addStop(stopName, stopLat, stopLon);
+        });
+      });
+    });
+  }
+
+  // Close search dropdown on click outside
+  document.addEventListener('click', (e) => {
+    if (!document.getElementById('map-search-bar')?.contains(e.target)) {
+      searchResultsDropdown?.classList.add('hidden');
+    }
+  });
+
+  /* ── TRANSIT MODE CONTROLS ──────────────────────────────────────*/
+  document.getElementById('transit-mode-pills')?.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.mode-pill');
+    if (!btn) return;
+    document.querySelectorAll('.mode-pill').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentTransitMode = btn.dataset.mode || 'driving';
+    mapRenderer.setTransitMode(currentTransitMode);
+
+    await fetch('/api/trip/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        startTime: currentTripConfig.startTime || '09:00',
+        startLat: currentTripConfig.startLat,
+        startLon: currentTripConfig.startLon,
+        transitMode: currentTransitMode,
+        roundTrip: isRoundTripActive,
+      }),
+    });
+    await syncState();
+    showToast(`Mode set to ${btn.textContent.trim()}`);
+  });
+
+  /* ── FIT ROUTE BUTTON ───────────────────────────────────────────*/
+  document.getElementById('btn-fit-route')?.addEventListener('click', () => {
+    mapRenderer.fitRoute();
+  });
+
+  /* ── ROUND TRIP TOGGLE ──────────────────────────────────────────*/
+  const chkRoundTrip = document.getElementById('chk-round-trip');
+  chkRoundTrip?.addEventListener('change', async () => {
+    isRoundTripActive = Boolean(chkRoundTrip.checked);
+    await fetch('/api/trip/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        startTime: currentTripConfig.startTime || '09:00',
+        startLat: currentTripConfig.startLat,
+        startLon: currentTripConfig.startLon,
+        transitMode: currentTransitMode,
+        roundTrip: isRoundTripActive,
+      }),
+    });
+    await syncState();
+    showToast(isRoundTripActive ? '🔄 Round trip loop enabled' : '➡️ One-way tour enabled');
+  });
+
+  /* ── DEPARTURE TIME INPUT ───────────────────────────────────────*/
+  const inputTripStart = document.getElementById('input-trip-start-time');
+  inputTripStart?.addEventListener('change', async () => {
+    const startTime = inputTripStart.value;
+    if (!startTime) return;
+    await fetch('/api/trip/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        startTime,
+        startLat: currentTripConfig.startLat,
+        startLon: currentTripConfig.startLon,
+        transitMode: currentTransitMode,
+        roundTrip: isRoundTripActive,
+      }),
+    });
+    await syncState();
+    showToast(`⏰ Trip departure time set to ${startTime}`);
+  });
+
   /* ── WEIGHT SLIDER PANEL ────────────────────────────────────────*/
   const sliderPanel = new WeightSliderPanel('slider-panel', async (weights) => {
+    isManualReordered = false;
+    document.getElementById('ai-comparison-banner')?.classList.add('hidden');
     await fetch('/api/weights', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -367,7 +856,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   /* ── PRESET SELECTOR ────────────────────────────────────────────*/
-  new PresetSelector('preset-container', async (presetName) => {
+  const presetSelector = new PresetSelector('preset-container', async (presetName) => {
+    isManualReordered = false;
+    document.getElementById('ai-comparison-banner')?.classList.add('hidden');
     const res  = await fetch('/api/presets/select', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -400,7 +891,6 @@ document.addEventListener('DOMContentLoaded', () => {
       .join('');
   }
 
-  // Region tab clicks
   document.getElementById('trip-region-tabs')?.addEventListener('click', (e) => {
     const btn = e.target.closest('.region-tab');
     if (!btn) return;
@@ -415,57 +905,151 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!trip) return;
 
     showSpinner(true);
+    isManualReordered = false;
+    document.getElementById('ai-comparison-banner')?.classList.add('hidden');
 
     // Clear existing stops first
     for (const s of [...currentStops]) {
       await fetch(`/api/stops/${s.id}`, { method: 'DELETE' });
     }
 
+    // Set trip departure config directly for the selected city coordinates!
+    currentTripConfig = {
+      startTime: currentTripConfig.startTime || '09:00',
+      startLat: trip.centerLat,
+      startLon: trip.centerLon,
+      transitMode: currentTransitMode,
+      roundTrip: isRoundTripActive,
+    };
+    await fetch('/api/trip/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(currentTripConfig),
+    });
+
     // Fly the map to the city centre before stops render
     mapRenderer.flyTo(trip.centerLat, trip.centerLon, trip.zoom);
 
-    // Load new stops
+    // Load new stops with realistic visit duration (30 min)
     for (const stop of trip.stops) {
       await fetch('/api/stops', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(stop),
+        body: JSON.stringify({ ...stop, dwellMin: 30 }),
       });
     }
 
     await syncState();
     showToast(`${trip.flag} ${trip.name} trip loaded!`);
+
+    const chip = document.getElementById('header-active-city-chip');
+    const chipName = document.getElementById('header-active-city-name');
+    if (chip && chipName) {
+      chipName.textContent = `${trip.flag} ${trip.name}`;
+      chip.classList.remove('hidden');
+    }
+    window.switchSidebarTab?.('tab-itinerary');
   };
 
-  // Wire the header "Load Trip" button to load the first Asia trip by default
-  document.getElementById('btn-sample-data')?.addEventListener('click', () => {
-    window.loadWorldTrip('bangalore', 'asia');
-  });
-
-  // Initial render
-  renderTripCards('asia');
-
-  /* ── HEADER BUTTONS ─────────────────────────────────────────────*/
-  document.getElementById('btn-save-trip')?.addEventListener('click', async () => {
-    const res  = await fetch('/api/trip/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tripId: 'default-trip' }),
+  /* ── SIDEBAR TAB SWITCHING ──────────────────────────────────────*/
+  window.switchSidebarTab = function (tabId) {
+    document.querySelectorAll('.s-tab').forEach((tab) => {
+      tab.classList.toggle('active', tab.dataset.tab === tabId);
     });
-    const data = await res.json();
-    showToast(data.message || '✅ Trip saved to SQLite');
+    document.querySelectorAll('.tab-pane').forEach((pane) => {
+      pane.classList.toggle('active', pane.id === tabId);
+    });
+  };
+
+  document.querySelectorAll('.s-tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      window.switchSidebarTab(tab.dataset.tab);
+    });
   });
 
-  document.getElementById('btn-load-trip')?.addEventListener('click', async () => {
-    const res = await fetch('/api/trip/load/default-trip');
-    if (!res.ok) { showToast('⚠️ No saved trip found.', 'warning'); return; }
-    await syncState();
-    showToast('📂 Saved trip reloaded from SQLite');
+  // Wire header buttons
+  document.getElementById('btn-sample-data')?.addEventListener('click', () => {
+    window.switchSidebarTab('tab-explore');
+    renderTripCards(activeRegion);
+  });
+
+  // Sidebar collapse toggle button
+  document.getElementById('btn-toggle-sidebar')?.addEventListener('click', () => {
+    const layout = document.getElementById('app-layout');
+    layout?.classList.toggle('sidebar-collapsed');
+    setTimeout(() => {
+      mapRenderer?.map?.invalidateSize();
+    }, 250);
+  });
+
+  // Shortcuts modal
+  document.getElementById('btn-shortcuts')?.addEventListener('click', () => {
+    openModal('modal-shortcuts');
+  });
+  document.getElementById('btn-shortcuts-close')?.addEventListener('click', () => {
+    closeModal('modal-shortcuts');
+  });
+  document.getElementById('btn-shortcuts-done')?.addEventListener('click', () => {
+    closeModal('modal-shortcuts');
+  });
+
+  // Global Keyboard Shortcuts
+  window.addEventListener('keydown', (e) => {
+    const activeEl = document.activeElement;
+    const tag = activeEl?.tagName?.toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+      if (e.key === 'Escape') {
+        activeEl.blur();
+        closeAllModals();
+        document.getElementById('search-results-dropdown')?.classList.add('hidden');
+      }
+      return;
+    }
+
+    if (e.key === '/') {
+      e.preventDefault();
+      const searchInput = document.getElementById('input-map-search');
+      searchInput?.focus();
+      searchInput?.select();
+    } else if (e.key.toLowerCase() === 'f') {
+      mapRenderer?.fitRoute();
+    } else if (e.key.toLowerCase() === 'b') {
+      document.getElementById('app-layout')?.classList.toggle('sidebar-collapsed');
+      setTimeout(() => mapRenderer?.map?.invalidateSize(), 250);
+    } else if (e.key === '1') {
+      window.switchSidebarTab('tab-itinerary');
+    } else if (e.key === '2') {
+      window.switchSidebarTab('tab-tuning');
+    } else if (e.key === '3') {
+      window.switchSidebarTab('tab-explore');
+    } else if (e.key === '?') {
+      openModal('modal-shortcuts');
+    } else if (e.key === 'Escape') {
+      closeAllModals();
+      document.getElementById('search-results-dropdown')?.classList.add('hidden');
+    }
+  });
+
+  document.getElementById('btn-save-trip')?.addEventListener('click', () => {
+    const inputTripName = document.getElementById('input-save-trip-name');
+    if (inputTripName) inputTripName.value = `My-Trip-${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    openModal('modal-save-trip');
+  });
+
+  document.getElementById('btn-my-trips')?.addEventListener('click', () => {
+    openMyTripsModal();
+  });
+
+  document.getElementById('btn-export')?.addEventListener('click', () => {
+    openExportModal();
   });
 
   document.getElementById('btn-clear-all')?.addEventListener('click', async () => {
     if (!currentStops.length) return;
     showSpinner(true);
+    isManualReordered = false;
+    document.getElementById('ai-comparison-banner')?.classList.add('hidden');
+    document.getElementById('header-active-city-chip')?.classList.add('hidden');
     for (const s of [...currentStops]) {
       await fetch(`/api/stops/${s.id}`, { method: 'DELETE' });
     }
@@ -473,13 +1057,33 @@ document.addEventListener('DOMContentLoaded', () => {
     showToast('🗑️ All stops cleared');
   });
 
+  // Initial render of sample cards
+  renderTripCards('asia');
+
   /* ── CORE ADD STOP ──────────────────────────────────────────────*/
-  async function addStop(name, lat, lon) {
+  async function addStop(name, lat, lon, prefStart = null, prefEnd = null, dwellMin = 30) {
     showSpinner(true);
+
+    // If canvas was empty, anchor trip start location to the first stop!
+    if (currentStops.length === 0) {
+      currentTripConfig = {
+        startTime: currentTripConfig.startTime || '09:00',
+        startLat: lat,
+        startLon: lon,
+        transitMode: currentTransitMode,
+        roundTrip: isRoundTripActive,
+      };
+      await fetch('/api/trip/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(currentTripConfig),
+      });
+    }
+
     await fetch('/api/stops', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, lat, lon }),
+      body: JSON.stringify({ name, lat, lon, prefStart, prefEnd, dwellMin }),
     });
     await syncState();
   }
@@ -491,7 +1095,47 @@ document.addEventListener('DOMContentLoaded', () => {
       const res   = await fetch('/api/state');
       const state = await res.json();
       const report = state.routeReport;
+      lastReport = report;
       currentStops = (state.rawRoute ? state.rawRoute.stops : state.stops) || [];
+
+      // Trip config sync
+      if (state.tripConfig) {
+        currentTripConfig = state.tripConfig;
+        const depInput = document.getElementById('input-trip-start-time');
+        if (depInput && state.tripConfig.startTime && depInput !== document.activeElement) {
+          depInput.value = state.tripConfig.startTime;
+        }
+      }
+
+      // Track AI baseline stats for comparison banner
+      if (!isManualReordered && currentStops.length >= 2) {
+        originalAiRouteStats = {
+          distanceKm: report.totalDistanceKm,
+          travelTimeMin: report.totalTravelTimeMin,
+        };
+      }
+
+      // Update AI Comparison Banner
+      const compBanner = document.getElementById('ai-comparison-banner');
+      if (compBanner) {
+        if (isManualReordered && originalAiRouteStats && currentStops.length >= 2) {
+          const diffKm = Number((report.totalDistanceKm - originalAiRouteStats.distanceKm).toFixed(1));
+          const diffTime = Math.round(report.totalTravelTimeMin - originalAiRouteStats.travelTimeMin);
+          const aiSavings = diffKm > 0
+            ? `AI saves ${diffKm} km & ${diffTime > 0 ? diffTime : 0} min`
+            : `AI and custom sequences are balanced`;
+
+          compBanner.innerHTML = `
+            <div>
+              <b>Custom Sequence:</b> ${report.totalDistanceKm} km · ${report.totalTravelTimeMin} min
+              <span style="display:block;font-size:0.67rem;color:var(--text-dim);margin-top:1px">${aiSavings}</span>
+            </div>
+            <button class="btn-reoptimize" onclick="window.reoptimizeRoute()">⚡ AI Optimize</button>`;
+          compBanner.classList.remove('hidden');
+        } else {
+          compBanner.classList.add('hidden');
+        }
+      }
 
       // Stats
       const hasStops = currentStops.length > 0;
@@ -519,19 +1163,26 @@ document.addEventListener('DOMContentLoaded', () => {
           ? report.violations.map((v) => `<div class="alert-box">⚠️ <b>${v.type}</b>: ${v.message}</div>`).join('')
           : '';
 
-      // Map
+      // Map polyline & markers
       mapRenderer.renderStops(currentStops);
-      mapRenderer.renderRoutePolyline(state.rawRoute);
+      mapRenderer.renderRoutePolyline(state.rawRoute, currentTransitMode);
 
-      // Score breakdown
+      // Score breakdown card
       scoreCard.render(state.scoreBreakdown);
 
       // Stop count badge
       document.getElementById('badge-count').textContent =
         `${currentStops.length} Stop${currentStops.length !== 1 ? 's' : ''}`;
 
-      // Stops list
-      renderStopList(currentStops);
+      // Stops list with connecting legs, dwell times, and explainability tags
+      renderStopList(currentStops, report);
+
+      // Preset badge + active pill
+      if (state.activePreset) {
+        const badgePreset = document.getElementById('badge-preset');
+        if (badgePreset) badgePreset.textContent = state.activePreset;
+        presetSelector.setActive(state.activePreset);
+      }
 
       // Toast hint
       const toast = document.getElementById('map-toast');
@@ -544,32 +1195,112 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  /* ── STOP LIST ──────────────────────────────────────────────────*/
-  function renderStopList(stops) {
+  /* ── STOP LIST RENDERER (with timeline, legs, & explainability) ──*/
+  function renderStopList(stops, report = null) {
     const container = document.getElementById('stops-container');
     if (!stops.length) {
-      container.innerHTML = `<div class="empty-state"><span class="icon">📍</span>Click on the map to add your first stop</div>`;
+      container.innerHTML = `<div class="empty-state"><span class="icon">📍</span>Search a place above or click on the map to add stops</div>`;
       return;
     }
-    container.innerHTML = stops
-      .map(
-        (s, idx) => `
-        <div class="stop-item">
-          <div class="stop-badge">${idx + 1}</div>
+
+    const legs = report?.legs || [];
+    let html = '';
+
+    stops.forEach((s, idx) => {
+      // If not the first stop, render the connecting leg connector
+      if (idx > 0 && legs[idx - 1]) {
+        const leg = legs[idx - 1];
+        const modeIcon = currentTransitMode === 'walking' ? '🚶' : currentTransitMode === 'cycling' ? '🚲' : '🚗';
+        html += `
+          <div class="leg-connector">
+            <span class="leg-badge">${modeIcon} ${leg.distanceKm} km · ${leg.travelTimeMin} min</span>
+          </div>`;
+      }
+
+      // Constraint tags
+      const constraintBadges = [];
+      if (s.constraints && Array.isArray(s.constraints)) {
+        for (const c of s.constraints) {
+          const cType = c.name || c.type;
+          const cId = c.id || c.constraint_id;
+          if (cType === 'OPENING_HOURS') {
+            const ot = c.openTime || c.open_time;
+            const ct = c.closeTime || c.close_time;
+            constraintBadges.push(
+              `<span class="tag tag-constraint" title="Opening Hours">🕐 ${ot}–${ct} <button class="tag-del" title="Remove constraint" onclick="window.removeConstraint('${s.id}','${cId}')">✕</button></span>`
+            );
+          } else if (cType === 'PRECEDENCE') {
+            const targetId = c.precedesStopId || c.precedes_stop_id;
+            const targetStop = currentStops.find((st) => st.id === targetId);
+            const targetName = targetStop?.name ? targetStop.name.slice(0, 16) : 'Stop';
+            constraintBadges.push(
+              `<span class="tag tag-constraint" title="Precedence Rule">🔀 Before: ${escHtml(targetName)} <button class="tag-del" title="Remove constraint" onclick="window.removeConstraint('${s.id}','${cId}')">✕</button></span>`
+            );
+          }
+        }
+      }
+      if (s.prefStart && s.prefEnd) {
+        constraintBadges.push(
+          `<span class="tag tag-pref" title="User Preferred Arrival Time">🎯 ${s.prefStart}–${s.prefEnd}</span>`
+        );
+      }
+
+      // Timing info
+      const arr = s.scheduledArrival || '—';
+      const dep = s.scheduledDeparture || arr;
+      const dwell = s.dwellMin || 30;
+
+      // Explainability reasons
+      const reasonTag = s.reasoning && s.reasoning[0]
+        ? `<div class="chip-reason">💡 ${escHtml(s.reasoning[0])}</div>`
+        : '';
+
+      // Environmental factors
+      let envPills = '';
+      if (s.factors) {
+        const wScore = Math.round((s.factors.weatherScore || 0) * 100);
+        const cScore = Math.round((s.factors.crowdScore || 0) * 100);
+        const sScore = Math.round((s.factors.scenicScore || 0) * 100);
+        envPills = `
+          <div class="factor-mini-pills">
+            <span class="f-pill f-pill-weather" title="Weather Pleasantness">🌤️ ${wScore}%</span>
+            <span class="f-pill f-pill-crowd"   title="Inverse Crowd Density">👥 ${cScore}%</span>
+            <span class="f-pill f-pill-scenic"  title="Scenic Rating">🌲 ${sScore}%</span>
+          </div>`;
+      }
+
+      // Up/Down reordering controls
+      const canMoveUp = idx > 0;
+      const canMoveDown = idx < stops.length - 1;
+
+      html += `
+        <div class="stop-item" id="stop-card-${s.id}"
+          onmouseenter="mapRenderer.highlightMarker('${s.id}', true)"
+          onmouseleave="mapRenderer.highlightMarker('${s.id}', false)">
+          <div class="stop-badge" onclick="mapRenderer.flyTo(${s.lat}, ${s.lon}, 15)" style="cursor:pointer" title="Zoom to stop">${idx + 1}</div>
           <div class="stop-info">
-            <div class="stop-title">${escHtml(s.name)}</div>
+            <div class="stop-title" onclick="mapRenderer.flyTo(${s.lat}, ${s.lon}, 15)" style="cursor:pointer" title="Zoom to stop">${escHtml(s.name)}</div>
             <div class="stop-meta">
-              ${s.scheduledArrival ? `<span class="tag">🕐 ${s.scheduledArrival}</span>` : ''}
-              <span style="color:var(--text-muted)">${s.lat.toFixed(4)}, ${s.lon.toFixed(4)}</span>
+              <span class="tag" style="background:rgba(56,189,248,0.1);color:var(--primary);border-color:rgba(56,189,248,0.25)">
+                🕐 ${arr} → ${dep} <span style="opacity:0.7">(${dwell}m)</span>
+              </span>
+              <span style="color:var(--text-muted);font-size:0.67rem">${s.lat.toFixed(4)}, ${s.lon.toFixed(4)}</span>
+              ${constraintBadges.join(' ')}
             </div>
+            ${reasonTag}
+            ${envPills}
           </div>
           <div class="stop-actions">
-            <button class="btn-icon btn-icon-info"  title="Set opening hours" onclick="window.addOpeningHoursPrompt('${s.id}')">🕐</button>
-            <button class="btn-icon btn-icon-danger" title="Remove stop"       onclick="window.removeStop('${s.id}')">✕</button>
+            ${canMoveUp ? `<button class="btn-icon" title="Move stop earlier in sequence" onclick="window.moveStopUp(${idx})">▲</button>` : ''}
+            ${canMoveDown ? `<button class="btn-icon" title="Move stop later in sequence" onclick="window.moveStopDown(${idx})">▼</button>` : ''}
+            <button class="btn-icon btn-icon-info"      title="Set opening hours"        onclick="window.addOpeningHoursPrompt('${s.id}')">🕐</button>
+            <button class="btn-icon btn-icon-secondary" title="Set precedence order rule" onclick="window.addPrecedencePrompt('${s.id}')">🔀</button>
+            <button class="btn-icon btn-icon-danger"    title="Remove stop"              onclick="window.removeStop('${s.id}')">✕</button>
           </div>
-        </div>`
-      )
-      .join('');
+        </div>`;
+    });
+
+    container.innerHTML = html;
   }
 
   /* ── UTILITIES ──────────────────────────────────────────────────*/

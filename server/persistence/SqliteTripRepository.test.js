@@ -73,4 +73,47 @@ describe('SqliteTripRepository', () => {
     expect(res.total_time).toBe(45.5);
     expect(res.total_distance).toBe(12.3);
   });
+
+  test('saves and reloads precedence constraints accurately', () => {
+    const tripData = {
+      tripId: 'test-trip-precedence',
+      startTime: '08:30',
+      startLat: 10.0,
+      startLon: 20.0,
+      activePresetId: 'Best Scenic',
+      stops: [
+        {
+          id: 'stop-A',
+          name: 'Stop A',
+          lat: 10.1,
+          lon: 20.1,
+          inputOrder: 0,
+          constraints: [
+            {
+              id: 'c-prec-1',
+              name: 'PRECEDENCE',
+              precedesStopId: 'stop-B',
+            },
+          ],
+        },
+        {
+          id: 'stop-B',
+          name: 'Stop B',
+          lat: 10.2,
+          lon: 20.2,
+          inputOrder: 1,
+          constraints: [],
+        },
+      ],
+    };
+
+    repo.saveTrip(tripData);
+    const loaded = repo.loadTrip('test-trip-precedence');
+
+    expect(loaded).not.toBeNull();
+    expect(loaded.stops.length).toBe(2);
+    expect(loaded.stops[0].constraints.length).toBe(1);
+    expect(loaded.stops[0].constraints[0].type).toBe('PRECEDENCE');
+    expect(loaded.stops[0].constraints[0].precedes_stop_id).toBe('stop-B');
+  });
 });

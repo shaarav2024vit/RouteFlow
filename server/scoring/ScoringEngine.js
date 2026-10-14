@@ -35,13 +35,14 @@ class ScoringEngine {
       return { totalScore: 0, breakdown: new ScoreBreakdown({}) };
     }
 
+    const wObj = weights || {};
     const w = {
-      travelTimeWeight:  weights.travelTimeWeight  ?? 1.0,
-      timeWindowWeight:  weights.timeWindowWeight  ?? 0.5,
-      weatherWeight:     weights.weatherWeight     ?? 0.4,
-      crowdWeight:       weights.crowdWeight       ?? 0.4,
-      scenicWeight:      weights.scenicWeight      ?? 0.5,
-      preferenceWeight:  weights.preferenceWeight  ?? 0.3,
+      travelTimeWeight:  wObj.travelTimeWeight  ?? 1.0,
+      timeWindowWeight:  wObj.timeWindowWeight  ?? 0.5,
+      weatherWeight:     wObj.weatherWeight     ?? 0.4,
+      crowdWeight:       wObj.crowdWeight       ?? 0.4,
+      scenicWeight:      wObj.scenicWeight      ?? 0.5,
+      preferenceWeight:  wObj.preferenceWeight  ?? 0.3,
     };
 
     /* ── FACTOR 1: Travel Time Efficiency ──────────────────────────
@@ -81,11 +82,35 @@ class ScoringEngine {
 
       // Factor 2: Time window / opening hours
       let stopTimeWindowScore = 1.0;
+      let hasExplicitOpeningHours = false;
       if (stop.constraints) {
         for (const c of stop.constraints) {
-          if (c.name === 'OPENING_HOURS' && c.isViolated(route)) {
-            stopTimeWindowScore = 0.0;
-            break;
+          if (c.name === 'OPENING_HOURS') {
+            hasExplicitOpeningHours = true;
+            if (c.isViolated(route)) {
+              stopTimeWindowScore = 0.0;
+              break;
+            }
+          }
+        }
+      }
+
+      // If no explicit constraint attached, infer natural venue operating window
+      // (Museums, galleries, palaces typically open at 10:00 and close at 18:00)
+      if (!hasExplicitOpeningHours) {
+        const stopName = (stop.name || '').toLowerCase();
+        const isMuseum = (
+          stopName.includes('museum') || stopName.includes('gallery') ||
+          stopName.includes('palace') || stopName.includes('opera') ||
+          stopName.includes('castle') || stopName.includes('library')
+        );
+        if (isMuseum) {
+          if (arrivalMin < 600) {
+            stopTimeWindowScore = 0.30; // Closed before 10:00 AM (waiting required)
+          } else if (arrivalMin > 1080) {
+            stopTimeWindowScore = 0.40; // Closed after 18:00
+          } else {
+            stopTimeWindowScore = 1.0; // Open
           }
         }
       }

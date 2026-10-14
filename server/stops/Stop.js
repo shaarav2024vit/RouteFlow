@@ -16,6 +16,7 @@ class Stop {
    * @param {number} [params.inputOrder=0]
    * @param {string|null} [params.prefStart=null]
    * @param {string|null} [params.prefEnd=null]
+   * @param {number} [params.dwellMin=30]
    * @param {Array<import('./Constraint').Constraint>} [params.constraints=[]]
    */
   constructor({
@@ -26,6 +27,7 @@ class Stop {
     inputOrder = 0,
     prefStart = null,
     prefEnd = null,
+    dwellMin = 30,
     constraints = [],
   }) {
     this.id = id;
@@ -35,6 +37,7 @@ class Stop {
     this.inputOrder = inputOrder;
     this.prefStart = prefStart;
     this.prefEnd = prefEnd;
+    this.dwellMin = dwellMin;
     this.constraints = constraints;
   }
 }

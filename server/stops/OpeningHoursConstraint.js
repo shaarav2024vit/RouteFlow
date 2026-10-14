@@ -36,9 +36,11 @@ class OpeningHoursConstraint extends Constraint {
    */
   violationMessage(route) {
     const arrival = route.getArrivalTime(this.stopId);
+    const stop = route.stops ? route.stops.find((s) => s.id === this.stopId) : null;
+    const stopLabel = stop ? stop.name : this.stopId;
     return (
       `Arrival at ${arrival} is outside opening hours ` +
-      `${this.openTime}–${this.closeTime} for stop ${this.stopId}.`
+      `${this.openTime}–${this.closeTime} for "${stopLabel}".`
     );
   }
 }

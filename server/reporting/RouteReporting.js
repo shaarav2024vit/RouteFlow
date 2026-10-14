@@ -53,7 +53,13 @@ class RouteReporting {
         lat: s.lat,
         lon: s.lon,
         scheduledArrival: s.scheduledArrival,
+        scheduledDeparture: s.scheduledDeparture || s.scheduledArrival,
+        dwellMin: s.dwellMin || 0,
+        factors: s.factors || null,
+        reasoning: s.reasoning || [],
       })),
+      legs: route.legs || [],
+      isRoundTrip: Boolean(route.isRoundTrip),
     };
   }
 }

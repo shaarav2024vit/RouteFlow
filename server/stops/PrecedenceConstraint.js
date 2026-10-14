@@ -25,17 +25,24 @@ class PrecedenceConstraint extends Constraint {
    */
   isViolated(route) {
     const order = route.getStopOrder();
-    return order.indexOf(this.stopId) > order.indexOf(this.precedesStopId);
+    const idxA = order.indexOf(this.stopId);
+    const idxB = order.indexOf(this.precedesStopId);
+    if (idxA === -1 || idxB === -1) {
+      return false;
+    }
+    return idxA > idxB;
   }
 
   /**
+   * @param {Route} [route]
    * @returns {string}
    */
-  violationMessage() {
-    return (
-      `Stop ${this.stopId} must be visited before ` +
-      `stop ${this.precedesStopId}.`
-    );
+  violationMessage(route) {
+    const stopA = route && route.stops ? route.stops.find((s) => s.id === this.stopId) : null;
+    const stopB = route && route.stops ? route.stops.find((s) => s.id === this.precedesStopId) : null;
+    const labelA = stopA ? stopA.name : this.stopId;
+    const labelB = stopB ? stopB.name : this.precedesStopId;
+    return `"${labelA}" must be visited before "${labelB}".`;
   }
 }
 

@@ -79,16 +79,18 @@ class SqliteTripRepository extends ITripRepository {
           s.prefStart || null,
           s.prefEnd || null
         );
+      }
 
+      for (const s of stops) {
         if (s.constraints && Array.isArray(s.constraints)) {
           for (const c of s.constraints) {
             insertConstraint.run(
-              c.id,
+              c.id || c.constraint_id,
               s.id,
-              c.name,
-              c.openTime || null,
-              c.closeTime || null,
-              c.precedesStopId || null
+              c.name || c.type,
+              c.openTime || c.open_time || null,
+              c.closeTime || c.close_time || null,
+              c.precedesStopId || c.precedes_stop_id || null
             );
           }
         }
@@ -168,6 +170,42 @@ class SqliteTripRepository extends ITripRepository {
     });
 
     transaction();
+  }
+
+  /**
+   * Returns a summary list of all stored trips
+   * @returns {Array<object>}
+   */
+  listTrips() {
+    return this.db.prepare(`
+      SELECT
+        t.trip_id as tripId,
+        t.start_time as startTime,
+        t.start_lat as startLat,
+        t.start_lon as startLon,
+        t.active_preset_id as activePresetId,
+        t.created_at as createdAt,
+        COUNT(s.stop_id) as stopCount,
+        r.total_distance as totalDistance,
+        r.total_time as totalTime,
+        r.violation_count as violationCount,
+        r.computed_at as computedAt
+      FROM trip t
+      LEFT JOIN stop s ON t.trip_id = s.trip_id
+      LEFT JOIN route_result r ON t.trip_id = r.trip_id
+      GROUP BY t.trip_id
+      ORDER BY t.created_at DESC
+    `).all();
+  }
+
+  /**
+   * Deletes a trip and cascades to its stops and results
+   * @param {string} tripId
+   * @returns {boolean}
+   */
+  deleteTrip(tripId) {
+    const info = this.db.prepare('DELETE FROM trip WHERE trip_id = ?').run(tripId);
+    return info.changes > 0;
   }
 
   close() {

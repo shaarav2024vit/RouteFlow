@@ -38,9 +38,10 @@ class StopManager extends EventEmitter {
     validateCoordinate(stopData.lat, stopData.lon);
     const stop = {
       ...stopData,
-      id: cryptoRandomId(),
+      id: stopData.id || cryptoRandomId(),
       inputOrder: this.stops.length,
       constraints: [],
+      dwellMin: stopData.dwellMin !== undefined ? Number(stopData.dwellMin) : 30,
     };
     this.stops.push(stop);
     this.emit('stopsChanged', { type: 'ADD', stopId: stop.id });
@@ -54,6 +55,11 @@ class StopManager extends EventEmitter {
   removeStop(stopId) {
     this.getStop(stopId); // confirms stop exists before removing
     this.stops = this.stops.filter((s) => s.id !== stopId);
+    this.stops.forEach((s) => {
+      s.constraints = s.constraints.filter(
+        (c) => !(c instanceof PrecedenceConstraint && c.precedesStopId === stopId)
+      );
+    });
     this.stops.forEach((s, i) => {
       s.inputOrder = i;
     });
@@ -80,14 +86,19 @@ class StopManager extends EventEmitter {
    * @param {string} startTime e.g. "09:00"
    * @param {number} startLat
    * @param {number} startLon
+   * @param {object} [options={}]
    */
-  setTripConfig(startTime, startLat, startLon) {
+  setTripConfig(startTime, startLat, startLon, options = {}) {
     validateCoordinate(startLat, startLon);
-    this.tripConfig = {
+    const cfg = {
       startTime,
       startLat,
       startLon,
     };
+    if (options.transitMode) cfg.transitMode = options.transitMode;
+    if (options.roundTrip !== undefined) cfg.roundTrip = Boolean(options.roundTrip);
+    if (options.startAtFirstStop !== undefined) cfg.startAtFirstStop = Boolean(options.startAtFirstStop);
+    this.tripConfig = cfg;
     this.emit('stopsChanged', { type: 'TRIP_CONFIG_UPDATED' });
   }
 
@@ -115,6 +126,17 @@ class StopManager extends EventEmitter {
 
     this.getStop(stopId).constraints.push(constraint);
     this.emit('stopsChanged', { type: 'CONSTRAINT_ADDED', stopId });
+  }
+
+  /**
+   * Removes a constraint from a stop
+   * @param {string} stopId
+   * @param {string} constraintId
+   */
+  removeConstraint(stopId, constraintId) {
+    const stop = this.getStop(stopId);
+    stop.constraints = stop.constraints.filter((c) => c.id !== constraintId);
+    this.emit('stopsChanged', { type: 'CONSTRAINT_REMOVED', stopId });
   }
 
   /**

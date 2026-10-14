@@ -38,9 +38,10 @@ class HaversineDistanceProvider extends IDistanceProvider {
    * @param {number} lon1
    * @param {number} lat2
    * @param {number} lon2
+   * @param {'default'|'driving'|'cycling'|'walking'} [mode='default']
    * @returns {{ distanceKm: number, travelTimeMin: number }}
    */
-  getDistance(lat1, lon1, lat2, lon2) {
+  getDistance(lat1, lon1, lat2, lon2, mode = 'default') {
     validateCoordinate(lat1, lon1);
     validateCoordinate(lat2, lon2);
 
@@ -54,7 +55,21 @@ class HaversineDistanceProvider extends IDistanceProvider {
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
     const distanceKm = EARTH_RADIUS_KM * c;
-    const travelTimeMin = (distanceKm / ASSUMED_SPEED_KMH) * 60 + FIXED_DWELL_MIN;
+
+    let speedKmh = ASSUMED_SPEED_KMH;
+    let dwellMin = FIXED_DWELL_MIN;
+    if (mode === 'walking') {
+      speedKmh = 5;
+      dwellMin = 1;
+    } else if (mode === 'cycling') {
+      speedKmh = 15;
+      dwellMin = 2;
+    } else if (mode === 'driving') {
+      speedKmh = 35;
+      dwellMin = 3;
+    }
+
+    const travelTimeMin = (distanceKm / speedKmh) * 60 + dwellMin;
 
     return { distanceKm, travelTimeMin };
   }

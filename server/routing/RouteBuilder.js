@@ -1,5 +1,6 @@
 const { Route } = require('./Route');
 const { ConstraintsFilter } = require('./ConstraintsFilter');
+const { SyntheticDataModule } = require('../scoring/SyntheticDataModule');
 
 /**
  * Helper to parse "HH:mm" to minutes from midnight
@@ -25,6 +26,105 @@ function formatMinutesToTime(totalMinutes) {
 }
 
 /**
+ * Determines appropriate origin coordinates for the itinerary.
+ * If startLat/Lon is specified and within 500km of the stops, it serves as a separate origin.
+ * Otherwise, if it's thousands of km away (e.g. Bangalore default during a Paris/Tokyo trip),
+ * the itinerary naturally starts at the first stop.
+ * @param {object} tripConfig
+ * @param {Array<object>} stops
+ * @returns {{ lat: number, lon: number, isSeparateOrigin: boolean }}
+ */
+function getStartLocation(tripConfig, stops) {
+  if (!stops || stops.length === 0) {
+    return {
+      lat: tripConfig?.startLat ?? 0,
+      lon: tripConfig?.startLon ?? 0,
+      isSeparateOrigin: false,
+    };
+  }
+
+  if (tripConfig?.startAtFirstStop) {
+    return { lat: stops[0].lat, lon: stops[0].lon, isSeparateOrigin: false };
+  }
+
+  if (tripConfig?.startLat != null && tripConfig?.startLon != null) {
+    const minDistance = Math.min(
+      ...stops.map((s) => {
+        const dLat = Math.abs(tripConfig.startLat - s.lat);
+        const dLon = Math.abs(tripConfig.startLon - s.lon);
+        return Math.sqrt(dLat * dLat + dLon * dLon) * 111;
+      })
+    );
+    if (minDistance < 500) {
+      return { lat: tripConfig.startLat, lon: tripConfig.startLon, isSeparateOrigin: true };
+    }
+  }
+
+  return { lat: stops[0].lat, lon: stops[0].lon, isSeparateOrigin: false };
+}
+
+/**
+ * Generates human-understandable explainability tags and reasoning for a stop's scheduled time.
+ * @param {object} stop
+ * @param {number} arrivalMinutes
+ * @param {object} envFactors
+ * @returns {string[]}
+ */
+function generateStopReasoning(stop, arrivalMinutes, envFactors) {
+  const reasons = [];
+  const hour = Math.floor(arrivalMinutes / 60);
+
+  if (stop.constraints && Array.isArray(stop.constraints)) {
+    const oh = stop.constraints.find((c) => (c.name || c.type) === 'OPENING_HOURS');
+    if (oh) {
+      const ot = oh.openTime || oh.open_time;
+      const ct = oh.closeTime || oh.close_time;
+      reasons.push(`Timed within venue opening hours (${ot} – ${ct})`);
+    }
+    const pc = stop.constraints.find((c) => (c.name || c.type) === 'PRECEDENCE');
+    if (pc) {
+      reasons.push('Ordered before dependent prerequisite destination');
+    }
+  }
+
+  if (stop.prefStart && stop.prefEnd) {
+    const pStart = parseTimeToMinutes(stop.prefStart);
+    const pEnd = parseTimeToMinutes(stop.prefEnd);
+    if (arrivalMinutes >= pStart && arrivalMinutes <= pEnd) {
+      reasons.push(`Satisfies preferred visit window (${stop.prefStart} – ${stop.prefEnd})`);
+    }
+  }
+
+  if (envFactors) {
+    if (envFactors.crowdScore >= 0.75) {
+      if (hour < 11) {
+        reasons.push('Morning arrival avoids midday tourist peak');
+      } else if (hour >= 14 && hour < 17) {
+        reasons.push('Mid-afternoon window avoids lunch tour groups');
+      } else {
+        reasons.push('Off-peak low crowd visiting slot');
+      }
+    } else if (envFactors.crowdScore < 0.4) {
+      reasons.push('Popular attraction visited during peak hours');
+    }
+
+    if (envFactors.weatherScore >= 0.8) {
+      reasons.push('Optimal daylight & outdoor weather conditions');
+    }
+
+    if (envFactors.scenicScore >= 0.7) {
+      reasons.push('High scenic landmark rating');
+    }
+  }
+
+  if (reasons.length === 0) {
+    reasons.push('Optimized for travel time and shortest geographic path');
+  }
+
+  return reasons;
+}
+
+/**
  * RouteBuilder
  * Traces to: FR-6, FR-7, FR-13; Week 4 §3, §5.2; Week 5 §4.1.
  *
@@ -44,7 +144,7 @@ class RouteBuilder {
   /**
    * Builds an initial candidate route using the Nearest-Neighbour heuristic (FR-6)
    * @param {Array<object>} stops
-   * @param {{ startTime: string, startLat: number, startLon: number }} tripConfig
+   * @param {{ startTime: string, startLat: number, startLon: number, transitMode?: string, roundTrip?: boolean, startAtFirstStop?: boolean }} tripConfig
    * @returns {Route}
    */
   buildInitialRoute(stops, tripConfig) {
@@ -55,8 +155,10 @@ class RouteBuilder {
     const unvisited = [...stops];
     const orderedStops = [];
 
-    let currentLat = tripConfig?.startLat ?? unvisited[0].lat;
-    let currentLon = tripConfig?.startLon ?? unvisited[0].lon;
+    const transitMode = tripConfig?.transitMode || 'default';
+    const startLoc = getStartLocation(tripConfig, stops);
+    let currentLat = startLoc.lat;
+    let currentLon = startLoc.lon;
     let currentTimeMin = parseTimeToMinutes(tripConfig?.startTime || '09:00');
 
     let totalDistanceKm = 0;
@@ -68,13 +170,37 @@ class RouteBuilder {
       let minDistance = Infinity;
       let bestLeg = null;
 
+      // When starting directly at the first stop:
+      if (!startLoc.isSeparateOrigin && orderedStops.length === 0) {
+        const nextStop = unvisited.shift();
+        const dwell = nextStop.dwellMin !== undefined ? Number(nextStop.dwellMin) : 0;
+        const depTimeMin = currentTimeMin + dwell;
+        const env = SyntheticDataModule.getFactors(nextStop, currentTimeMin);
+
+        orderedStops.push({
+          ...nextStop,
+          scheduledArrival: formatMinutesToTime(currentTimeMin),
+          scheduledDeparture: formatMinutesToTime(depTimeMin),
+          arrivalMinutes: currentTimeMin,
+          departureMinutes: depTimeMin,
+          factors: env,
+          reasoning: generateStopReasoning(nextStop, currentTimeMin, env),
+        });
+
+        currentLat = nextStop.lat;
+        currentLon = nextStop.lon;
+        currentTimeMin = depTimeMin;
+        continue;
+      }
+
       for (let i = 0; i < unvisited.length; i++) {
         const candidate = unvisited[i];
         const leg = this.distanceProvider.getDistance(
           currentLat,
           currentLon,
           candidate.lat,
-          candidate.lon
+          candidate.lon,
+          transitMode
         );
         if (leg.distanceKm < minDistance) {
           minDistance = leg.distanceKm;
@@ -88,10 +214,18 @@ class RouteBuilder {
       totalTravelTimeMin += bestLeg.travelTimeMin;
       currentTimeMin += bestLeg.travelTimeMin;
 
+      const dwell = nextStop.dwellMin !== undefined ? Number(nextStop.dwellMin) : 0;
+      const depTimeMin = currentTimeMin + dwell;
+      const env = SyntheticDataModule.getFactors(nextStop, currentTimeMin);
+
       const scheduledStop = {
         ...nextStop,
         scheduledArrival: formatMinutesToTime(currentTimeMin),
+        scheduledDeparture: formatMinutesToTime(depTimeMin),
         arrivalMinutes: currentTimeMin,
+        departureMinutes: depTimeMin,
+        factors: env,
+        reasoning: generateStopReasoning(nextStop, currentTimeMin, env),
       };
 
       orderedStops.push(scheduledStop);
@@ -99,12 +233,37 @@ class RouteBuilder {
         fromLat: currentLat,
         fromLon: currentLon,
         toStopId: nextStop.id,
-        distanceKm: bestLeg.distanceKm,
-        travelTimeMin: bestLeg.travelTimeMin,
+        toStopName: nextStop.name,
+        distanceKm: Number(bestLeg.distanceKm.toFixed(2)),
+        travelTimeMin: Number(bestLeg.travelTimeMin.toFixed(1)),
       });
 
       currentLat = nextStop.lat;
       currentLon = nextStop.lon;
+      currentTimeMin = depTimeMin;
+    }
+
+    let isRoundTrip = false;
+    if (tripConfig?.roundTrip && orderedStops.length >= 2) {
+      const returnLeg = this.distanceProvider.getDistance(
+        currentLat,
+        currentLon,
+        startLoc.lat,
+        startLoc.lon,
+        transitMode
+      );
+      totalDistanceKm += returnLeg.distanceKm;
+      totalTravelTimeMin += returnLeg.travelTimeMin;
+      legs.push({
+        fromLat: currentLat,
+        fromLon: currentLon,
+        toStopId: orderedStops[0].id,
+        toStopName: 'Return to Origin',
+        distanceKm: Number(returnLeg.distanceKm.toFixed(2)),
+        travelTimeMin: Number(returnLeg.travelTimeMin.toFixed(1)),
+        isReturnLeg: true,
+      });
+      isRoundTrip = true;
     }
 
     const candidateRoute = new Route({
@@ -113,6 +272,7 @@ class RouteBuilder {
       totalDistanceKm,
       totalTravelTimeMin,
     });
+    candidateRoute.isRoundTrip = isRoundTrip;
 
     const check = ConstraintsFilter.evaluate(candidateRoute);
     candidateRoute.violations = check.violations;
@@ -123,7 +283,7 @@ class RouteBuilder {
   /**
    * Recalculates timings and metrics for a specific sequence of stops
    * @param {Array<object>} stops
-   * @param {{ startTime: string, startLat: number, startLon: number }} tripConfig
+   * @param {{ startTime: string, startLat: number, startLon: number, transitMode?: string, roundTrip?: boolean, startAtFirstStop?: boolean }} tripConfig
    * @returns {Route}
    */
   scheduleRoute(stops, tripConfig) {
@@ -131,8 +291,10 @@ class RouteBuilder {
       return new Route({ stops: [] });
     }
 
-    let currentLat = tripConfig?.startLat ?? stops[0].lat;
-    let currentLon = tripConfig?.startLon ?? stops[0].lon;
+    const transitMode = tripConfig?.transitMode || 'default';
+    const startLoc = getStartLocation(tripConfig, stops);
+    let currentLat = startLoc.lat;
+    let currentLon = startLoc.lon;
     let currentTimeMin = parseTimeToMinutes(tripConfig?.startTime || '09:00');
 
     let totalDistanceKm = 0;
@@ -140,33 +302,90 @@ class RouteBuilder {
     const legs = [];
     const orderedStops = [];
 
-    for (const stop of stops) {
+    for (let i = 0; i < stops.length; i++) {
+      const stop = stops[i];
+
+      if (!startLoc.isSeparateOrigin && i === 0) {
+        const dwell = stop.dwellMin !== undefined ? Number(stop.dwellMin) : 0;
+        const depTimeMin = currentTimeMin + dwell;
+        const env = SyntheticDataModule.getFactors(stop, currentTimeMin);
+
+        orderedStops.push({
+          ...stop,
+          scheduledArrival: formatMinutesToTime(currentTimeMin),
+          scheduledDeparture: formatMinutesToTime(depTimeMin),
+          arrivalMinutes: currentTimeMin,
+          departureMinutes: depTimeMin,
+          factors: env,
+          reasoning: generateStopReasoning(stop, currentTimeMin, env),
+        });
+
+        currentLat = stop.lat;
+        currentLon = stop.lon;
+        currentTimeMin = depTimeMin;
+        continue;
+      }
+
       const leg = this.distanceProvider.getDistance(
         currentLat,
         currentLon,
         stop.lat,
-        stop.lon
+        stop.lon,
+        transitMode
       );
       totalDistanceKm += leg.distanceKm;
       totalTravelTimeMin += leg.travelTimeMin;
       currentTimeMin += leg.travelTimeMin;
 
+      const dwell = stop.dwellMin !== undefined ? Number(stop.dwellMin) : 0;
+      const depTimeMin = currentTimeMin + dwell;
+      const env = SyntheticDataModule.getFactors(stop, currentTimeMin);
+
       orderedStops.push({
         ...stop,
         scheduledArrival: formatMinutesToTime(currentTimeMin),
+        scheduledDeparture: formatMinutesToTime(depTimeMin),
         arrivalMinutes: currentTimeMin,
+        departureMinutes: depTimeMin,
+        factors: env,
+        reasoning: generateStopReasoning(stop, currentTimeMin, env),
       });
 
       legs.push({
         fromLat: currentLat,
         fromLon: currentLon,
         toStopId: stop.id,
-        distanceKm: leg.distanceKm,
-        travelTimeMin: leg.travelTimeMin,
+        toStopName: stop.name,
+        distanceKm: Number(leg.distanceKm.toFixed(2)),
+        travelTimeMin: Number(leg.travelTimeMin.toFixed(1)),
       });
 
       currentLat = stop.lat;
       currentLon = stop.lon;
+      currentTimeMin = depTimeMin;
+    }
+
+    let isRoundTrip = false;
+    if (tripConfig?.roundTrip && orderedStops.length >= 2) {
+      const returnLeg = this.distanceProvider.getDistance(
+        currentLat,
+        currentLon,
+        startLoc.lat,
+        startLoc.lon,
+        transitMode
+      );
+      totalDistanceKm += returnLeg.distanceKm;
+      totalTravelTimeMin += returnLeg.travelTimeMin;
+      legs.push({
+        fromLat: currentLat,
+        fromLon: currentLon,
+        toStopId: orderedStops[0].id,
+        toStopName: 'Return to Origin',
+        distanceKm: Number(returnLeg.distanceKm.toFixed(2)),
+        travelTimeMin: Number(returnLeg.travelTimeMin.toFixed(1)),
+        isReturnLeg: true,
+      });
+      isRoundTrip = true;
     }
 
     const route = new Route({
@@ -175,6 +394,7 @@ class RouteBuilder {
       totalDistanceKm,
       totalTravelTimeMin,
     });
+    route.isRoundTrip = isRoundTrip;
 
     const check = ConstraintsFilter.evaluate(route);
     route.violations = check.violations;
@@ -198,25 +418,57 @@ class RouteBuilder {
     }
 
     const stops = initialRoute.stops;
-    let candidatePool = [initialRoute];
+    const n = stops.length;
 
-    // If we have between 3 and 7 stops, evaluate multiple starting permutations
-    // so presets (Best Scenic, Least Crowded, Open Attractions) can discover genuinely different orders
-    if (stops.length >= 3 && stops.length <= 7) {
-      for (let s = 1; s < stops.length; s++) {
-        // Shift starting stop
-        const reordered = [...stops.slice(s), ...stops.slice(0, s)];
-        candidatePool.push(this.scheduleRoute(reordered, tripConfig));
+    // Helper to evaluate a candidate array of stops
+    const evalCandidate = (candStops) => {
+      const candRoute = this.scheduleRoute(candStops, tripConfig);
+      const violations = candRoute.violations ? candRoute.violations.length : 0;
+      const score = this.scoringEngine
+        ? this.scoringEngine.scoreRoute(candRoute, weightConfig).totalScore
+        : -candRoute.totalDistanceKm;
+      return { route: candRoute, violations, score };
+    };
+
+    let best = evalCandidate(stops);
+
+    // If n <= 6 stops (up to 720 permutations, takes < 15ms in JS):
+    // Evaluate permutations to guarantee finding the exact multi-objective optimum
+    // while strictly prioritizing zero constraint violations.
+    if (n <= 6) {
+      const getPermutations = (arr) => {
+        if (arr.length <= 1) return [arr];
+        const perms = [];
+        for (let i = 0; i < arr.length; i++) {
+          const current = arr[i];
+          const remaining = arr.slice(0, i).concat(arr.slice(i + 1));
+          for (const p of getPermutations(remaining)) {
+            perms.push([current].concat(p));
+          }
+        }
+        return perms;
+      };
+
+      const allPerms = getPermutations(stops);
+      for (const perm of allPerms) {
+        const cand = evalCandidate(perm);
+        if (cand.violations < best.violations) {
+          best = cand;
+        } else if (cand.violations === best.violations && cand.score > best.score) {
+          best = cand;
+        }
       }
+      return best.route;
     }
 
-    let bestRoute = initialRoute;
-    let bestScore = this.scoringEngine
-      ? this.scoringEngine.scoreRoute(bestRoute, weightConfig).totalScore
-      : -bestRoute.totalDistanceKm;
+    // For n > 6 stops: Multi-Start Variable Neighborhood Search (2-Opt + Relocation + Swaps)
+    let candidatePool = [stops];
+    for (let s = 1; s < Math.min(n, 6); s++) {
+      candidatePool.push([...stops.slice(s), ...stops.slice(0, s)]);
+    }
 
-    for (const startCand of candidatePool) {
-      let current = startCand;
+    for (const candStops of candidatePool) {
+      let current = evalCandidate(candStops);
       let improved = true;
       let iterations = 0;
       const MAX_ITERATIONS = 40;
@@ -224,72 +476,82 @@ class RouteBuilder {
       while (improved && iterations < MAX_ITERATIONS) {
         improved = false;
         iterations += 1;
-        const n = current.stops.length;
+        const curStops = current.route.stops;
+        const len = curStops.length;
 
-        for (let i = 0; i < n - 1; i++) {
-          for (let k = i + 1; k < n; k++) {
-            const reversedSlice = current.stops.slice(i, k + 1).reverse();
-            const candStops = [
-              ...current.stops.slice(0, i),
+        // Neighborhood 1: 2-Opt (Subsegment reversal)
+        for (let i = 0; i < len - 1 && !improved; i++) {
+          for (let k = i + 1; k < len; k++) {
+            const reversedSlice = curStops.slice(i, k + 1).reverse();
+            const cand = [
+              ...curStops.slice(0, i),
               ...reversedSlice,
-              ...current.stops.slice(k + 1),
+              ...curStops.slice(k + 1),
             ];
-
-            const candRoute = this.scheduleRoute(candStops, tripConfig);
-            const candValid = candRoute.violations.length === 0;
-            const currentValid = current.violations.length === 0;
-
-            let accept = false;
-
-            if (currentValid && !candValid) {
-              accept = false;
-            } else if (!currentValid && candValid) {
-              accept = true;
-            } else if (candRoute.violations.length < current.violations.length) {
-              accept = true;
-            } else if (candRoute.violations.length === current.violations.length) {
-              const candScore = this.scoringEngine
-                ? this.scoringEngine.scoreRoute(candRoute, weightConfig).totalScore
-                : -candRoute.totalDistanceKm;
-
-              const currScore = this.scoringEngine
-                ? this.scoringEngine.scoreRoute(current, weightConfig).totalScore
-                : -current.totalDistanceKm;
-
-              if (candScore > currScore) {
-                accept = true;
-              }
-            }
-
-            if (accept) {
-              current = candRoute;
+            const candEval = evalCandidate(cand);
+            if (
+              candEval.violations < current.violations ||
+              (candEval.violations === current.violations && candEval.score > current.score)
+            ) {
+              current = candEval;
               improved = true;
               break;
             }
           }
-          if (improved) break;
+        }
+
+        // Neighborhood 2: 1-Opt Relocation / Insertion (move stop i to index j)
+        if (!improved) {
+          for (let i = 0; i < len && !improved; i++) {
+            for (let j = 0; j < len; j++) {
+              if (i === j) continue;
+              const cand = [...curStops];
+              const [moved] = cand.splice(i, 1);
+              cand.splice(j, 0, moved);
+              const candEval = evalCandidate(cand);
+              if (
+                candEval.violations < current.violations ||
+                (candEval.violations === current.violations && candEval.score > current.score)
+              ) {
+                current = candEval;
+                improved = true;
+                break;
+              }
+            }
+          }
+        }
+
+        // Neighborhood 3: Pairwise Swaps
+        if (!improved) {
+          for (let i = 0; i < len - 1 && !improved; i++) {
+            for (let k = i + 1; k < len; k++) {
+              const cand = [...curStops];
+              const tmp = cand[i];
+              cand[i] = cand[k];
+              cand[k] = tmp;
+              const candEval = evalCandidate(cand);
+              if (
+                candEval.violations < current.violations ||
+                (candEval.violations === current.violations && candEval.score > current.score)
+              ) {
+                current = candEval;
+                improved = true;
+                break;
+              }
+            }
+          }
         }
       }
 
-      const score = this.scoringEngine
-        ? this.scoringEngine.scoreRoute(current, weightConfig).totalScore
-        : -current.totalDistanceKm;
-
-      const currValid = current.violations.length === 0;
-      const bestValid = bestRoute.violations.length === 0;
-
-      if (!bestValid && currValid) {
-        bestRoute = current;
-        bestScore = score;
-      } else if ((currValid && bestValid) || (!currValid && !bestValid)) {
-        if (score > bestScore) {
-          bestRoute = current;
-          bestScore = score;
-        }
+      if (
+        current.violations < best.violations ||
+        (current.violations === best.violations && current.score > best.score)
+      ) {
+        best = current;
       }
     }
 
-    return bestRoute;
+    return best.route;
   }
 }
 

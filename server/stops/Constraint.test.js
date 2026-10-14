@@ -44,21 +44,23 @@ describe('Constraint Hierarchy Contracts', () => {
 
     test('returns true when arrival is earlier than openTime', () => {
       const mockRoute = {
+        stops: [{ id: 'stop-1', name: 'The Museum' }],
         getArrivalTime: (stopId) => (stopId === 'stop-1' ? '09:30' : null),
       };
       expect(ohc.isViolated(mockRoute)).toBe(true);
       expect(ohc.violationMessage(mockRoute)).toBe(
-        'Arrival at 09:30 is outside opening hours 10:00–16:00 for stop stop-1.'
+        'Arrival at 09:30 is outside opening hours 10:00–16:00 for "The Museum".'
       );
     });
 
     test('returns true when arrival is later than closeTime', () => {
       const mockRoute = {
+        stops: [{ id: 'stop-1', name: 'The Museum' }],
         getArrivalTime: (stopId) => (stopId === 'stop-1' ? '16:15' : null),
       };
       expect(ohc.isViolated(mockRoute)).toBe(true);
       expect(ohc.violationMessage(mockRoute)).toBe(
-        'Arrival at 16:15 is outside opening hours 10:00–16:00 for stop stop-1.'
+        'Arrival at 16:15 is outside opening hours 10:00–16:00 for "The Museum".'
       );
     });
   });
@@ -83,11 +85,15 @@ describe('Constraint Hierarchy Contracts', () => {
 
     test('returns true when stopId comes after precedesStopId in route order', () => {
       const mockRoute = {
+        stops: [
+          { id: 'stop-B', name: 'Cafe' },
+          { id: 'stop-A', name: 'Museum' },
+        ],
         getStopOrder: () => ['stop-B', 'stop-A'],
       };
       expect(pc.isViolated(mockRoute)).toBe(true);
-      expect(pc.violationMessage()).toBe(
-        'Stop stop-A must be visited before stop stop-B.'
+      expect(pc.violationMessage(mockRoute)).toBe(
+        '"Museum" must be visited before "Cafe".'
       );
     });
   });

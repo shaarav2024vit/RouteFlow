@@ -125,4 +125,32 @@ describe('StopManager', () => {
     mgr.removeStop(s.id);
     expect(handler).toHaveBeenCalledWith(expect.objectContaining({ type: 'REMOVE', stopId: s.id }));
   });
+
+  test('removeConstraint removes constraint and emits stopsChanged', () => {
+    const mgr = new StopManager();
+    const s = mgr.addStop({ name: 'Cafe', lat: 10, lon: 20 });
+    const ohc = new OpeningHoursConstraint('c1', s.id, '10:00', '18:00');
+    mgr.attachConstraint(s.id, ohc);
+    expect(s.constraints.length).toBe(1);
+
+    const handler = jest.fn();
+    mgr.on('stopsChanged', handler);
+    mgr.removeConstraint(s.id, 'c1');
+
+    expect(s.constraints.length).toBe(0);
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ type: 'CONSTRAINT_REMOVED', stopId: s.id }));
+  });
+
+  test('removeStop cleans up precedence constraints on other stops targeting removed stop', () => {
+    const mgr = new StopManager();
+    const a = mgr.addStop({ name: 'Stop A', lat: 10, lon: 20 });
+    const b = mgr.addStop({ name: 'Stop B', lat: 11, lon: 21 });
+    const pc = new PrecedenceConstraint('pc-1', a.id, b.id);
+    mgr.attachConstraint(a.id, pc);
+    expect(a.constraints.length).toBe(1);
+
+    mgr.removeStop(b.id);
+    expect(a.constraints.length).toBe(0);
+  });
 });
+

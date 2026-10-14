@@ -56,8 +56,12 @@ function createApp(dbPath = ':memory:') {
   // Set trip config (FR-16)
   app.post('/api/trip/config', (req, res) => {
     try {
-      const { startTime, startLat, startLon } = req.body;
-      stopManager.setTripConfig(startTime, Number(startLat), Number(startLon));
+      const { startTime, startLat, startLon, transitMode, roundTrip, startAtFirstStop } = req.body;
+      stopManager.setTripConfig(startTime, Number(startLat), Number(startLon), {
+        transitMode,
+        roundTrip,
+        startAtFirstStop,
+      });
       res.json({ success: true, tripConfig: stopManager.tripConfig });
     } catch (err) {
       res.status(400).json({ error: err.message });
@@ -67,13 +71,14 @@ function createApp(dbPath = ':memory:') {
   // Add stop (FR-1)
   app.post('/api/stops', (req, res) => {
     try {
-      const { name, lat, lon, prefStart, prefEnd } = req.body;
+      const { name, lat, lon, prefStart, prefEnd, dwellMin } = req.body;
       const stop = stopManager.addStop({
         name: name || `Stop ${stopManager.stops.length + 1}`,
         lat: Number(lat),
         lon: Number(lon),
         prefStart,
         prefEnd,
+        dwellMin: dwellMin !== undefined ? Number(dwellMin) : 30,
       });
       res.status(201).json({ success: true, stop });
     } catch (err) {
@@ -102,6 +107,45 @@ function createApp(dbPath = ':memory:') {
     }
   });
 
+  // Update stop details (dwell time, name, preference)
+  app.patch('/api/stops/:id', (req, res) => {
+    try {
+      const stop = stopManager.getStop(req.params.id);
+      if (req.body.name !== undefined) stop.name = req.body.name;
+      if (req.body.dwellMin !== undefined) stop.dwellMin = Number(req.body.dwellMin);
+      if (req.body.prefStart !== undefined) stop.prefStart = req.body.prefStart;
+      if (req.body.prefEnd !== undefined) stop.prefEnd = req.body.prefEnd;
+      controller.recalculateRoute();
+      res.json({ success: true, stop });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Reorder stops manually
+  app.post('/api/stops/reorder', (req, res) => {
+    try {
+      const { orderedStopIds } = req.body;
+      if (!Array.isArray(orderedStopIds)) {
+        return res.status(400).json({ error: 'orderedStopIds must be an array' });
+      }
+      const map = new Map(stopManager.stops.map((s) => [s.id, s]));
+      const reordered = [];
+      for (const id of orderedStopIds) {
+        const found = map.get(id);
+        if (found) {
+          found.inputOrder = reordered.length;
+          reordered.push(found);
+        }
+      }
+      stopManager.stops = reordered;
+      controller.recalculateRoute();
+      res.json({ success: true, stops: stopManager.stops });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // Attach constraint (FR-4, FR-5)
   app.post('/api/stops/:id/constraints', (req, res) => {
     try {
@@ -119,6 +163,16 @@ function createApp(dbPath = ':memory:') {
 
       stopManager.attachConstraint(req.params.id, constraint);
       res.status(201).json({ success: true, constraint });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Remove constraint
+  app.delete('/api/stops/:id/constraints/:constraintId', (req, res) => {
+    try {
+      stopManager.removeConstraint(req.params.id, req.params.constraintId);
+      res.json({ success: true });
     } catch (err) {
       res.status(400).json({ error: err.message });
     }
@@ -183,6 +237,28 @@ function createApp(dbPath = ':memory:') {
     }
   });
 
+  // List all saved trips
+  app.get('/api/trips', (req, res) => {
+    try {
+      const trips = tripRepository.listTrips ? tripRepository.listTrips() : [];
+      res.json({ success: true, trips });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Delete saved trip
+  app.delete('/api/trip/:tripId', (req, res) => {
+    try {
+      if (tripRepository.deleteTrip) {
+        tripRepository.deleteTrip(req.params.tripId);
+      }
+      res.json({ success: true, message: 'Trip deleted' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Load Trip from SQLite
   app.get('/api/trip/load/:tripId', (req, res) => {
     try {
@@ -191,38 +267,73 @@ function createApp(dbPath = ':memory:') {
         return res.status(404).json({ error: 'Trip not found' });
       }
 
-      stopManager.stops = [];
-      stopManager.setTripConfig(data.startTime, data.startLat, data.startLon);
+      // Temporarily remove the stopsChanged listener so we don't trigger
+      // premature recalculations during the bulk-restore; we'll call once at end.
+      stopManager.removeAllListeners('stopsChanged');
 
+      stopManager.stops = [];
+      stopManager.tripConfig = {
+        startTime: data.startTime,
+        startLat: data.startLat,
+        startLon: data.startLon,
+      };
+
+      // Pass 1: add all stops preserving original IDs
       for (const s of data.stops) {
-        const added = stopManager.addStop({
-          name: s.name,
-          lat: s.lat,
-          lon: s.lon,
-          prefStart: s.prefStart,
-          prefEnd: s.prefEnd,
-        });
-        // reattach constraints
+        const stop = {
+          ...s,
+          id: s.id,
+          inputOrder: stopManager.stops.length,
+          constraints: [],
+        };
+        stopManager.stops.push(stop);
+      }
+
+      // Pass 2: reattach constraints now that all stops exist
+      for (const s of data.stops) {
         if (s.constraints) {
           for (const c of s.constraints) {
-            if (c.type === 'OPENING_HOURS') {
-              stopManager.attachConstraint(
-                added.id,
-                new OpeningHoursConstraint(c.constraint_id, added.id, c.open_time, c.close_time)
-              );
-            } else if (c.type === 'PRECEDENCE') {
-              stopManager.attachConstraint(
-                added.id,
-                new PrecedenceConstraint(c.constraint_id, added.id, c.precedes_stop_id)
-              );
+            const cType = c.type || c.name;
+            const cId = c.constraint_id || c.id;
+            try {
+              if (cType === 'OPENING_HOURS') {
+                stopManager.attachConstraint(
+                  s.id,
+                  new OpeningHoursConstraint(
+                    cId,
+                    s.id,
+                    c.open_time || c.openTime,
+                    c.close_time || c.closeTime
+                  )
+                );
+              } else if (cType === 'PRECEDENCE') {
+                stopManager.attachConstraint(
+                  s.id,
+                  new PrecedenceConstraint(
+                    cId,
+                    s.id,
+                    c.precedes_stop_id || c.precedesStopId
+                  )
+                );
+              }
+            } catch {
+              // skip invalid constraint during load
             }
           }
         }
       }
 
+      // Restore the stopsChanged listener before triggering recalculation
+      stopManager.on('stopsChanged', () => {
+        controller.recalculateRoute();
+      });
+
       if (data.activePresetId && PresetManager.PRESETS[data.activePresetId]) {
-        controller.setPreset(data.activePresetId);
+        presetManager.selectPreset(data.activePresetId);
       }
+
+      // Trigger a single recalculation with fully-restored state
+      controller.recalculateRoute();
 
       res.json({ success: true, trip: data });
     } catch (err) {
