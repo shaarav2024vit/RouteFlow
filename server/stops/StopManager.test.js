@@ -103,6 +103,9 @@ describe('StopManager', () => {
       startLon: 77.5946,
     });
     expect(handler).toHaveBeenCalledWith(expect.objectContaining({ type: 'TRIP_CONFIG_UPDATED' }));
+
+    mgr.setTripConfig('09:00', 12.9716, 77.5946, true);
+    expect(mgr.tripConfig.roundTrip).toBe(true);
   });
 
   test('emits stopsChanged on mutation', () => {
@@ -121,6 +124,12 @@ describe('StopManager', () => {
     expect(handler).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CONSTRAINT_ADDED', stopId: s.id })
     );
+
+    mgr.removeConstraint(s.id, 'c1');
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'CONSTRAINT_REMOVED', stopId: s.id })
+    );
+    expect(s.constraints).toHaveLength(0);
 
     mgr.removeStop(s.id);
     expect(handler).toHaveBeenCalledWith(expect.objectContaining({ type: 'REMOVE', stopId: s.id }));

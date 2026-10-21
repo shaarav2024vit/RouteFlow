@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RouteFlow — Smart Multi-Objective Route Planner</title>
+  <meta name="description" content="A practical multi-objective route planner that sequences your trip subject to opening hours, crowds, travel time, and constraints.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Local Leaflet CSS -->
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Clean Minimalist Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="logo">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="6" cy="19" r="3"/>
+            <path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/>
+            <circle cx="18" cy="5" r="3"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-name">RouteFlow</span>
+          <span class="brand-sub">Trip Sequencer</span>
+        </div>
+      </div>
+
+      <!-- Action Group -->
+      <div class="header-actions">
+        <!-- Theme Toggle -->
+        <button type="button" id="btnThemeToggle" class="btn btn-secondary btn-sm" title="Toggle Light / Dark Mode">
+          <span id="themeToggleIcon" class="btn-icon">☀️</span> <span id="themeToggleText">Light</span>
+        </button>
+
+        <!-- Consolidated Itineraries Dropdown -->
+        <div class="dropdown-wrapper">
+          <button type="button" id="btnTripsMenu" class="btn btn-secondary btn-sm" title="Explore sample tours or load saved SQLite trips">
+            <span class="btn-icon">📂</span> <span>Trips</span> <span class="arrow-down">▾</span>
+          </button>
+          <div id="tripsMenuDropdown" class="dropdown-menu dropdown-menu-trips hidden">
+            <!-- Header -->
+            <div class="trips-menu-header">
+              <span class="dropdown-group-title">Sample Itineraries</span>
+              <span class="trips-badge-pill">7 Available</span>
+            </div>
+
+            <!-- List of Sample Trips -->
+            <div class="trips-menu-list">
+              <button type="button" class="trips-menu-item" data-trip-key="delhi">
+                <span class="trip-item-icon">🇮🇳</span>
+                <div class="trip-item-details">
+                  <div class="trip-item-title-row">
+                    <strong class="trip-item-title">Delhi Heritage & Wonders</strong>
+                    <span class="trip-item-badge">5 stops</span>
+                  </div>
+                  <span class="trip-item-desc">Red Fort, India Gate, Qutub Minar, Lotus Temple</span>
+                </div>
+              </button>
+
+              <button type="button" class="trips-menu-item" data-trip-key="mumbai">
+                <span class="trip-item-icon">🇮🇳</span>
+                <div class="trip-item-details">
+                  <div class="trip-item-title-row">
+                    <strong class="trip-item-title">Mumbai Coastal & City Explorer</strong>
+                    <span class="trip-item-badge">5 stops</span>
+                  </div>
+                  <span class="trip-item-desc">Gateway of India, Marine Drive, Bandra, Siddhivinayak</span>
+                </div>
+              </button>
+
+              <button type="button" class="trips-menu-item" data-trip-key="bengaluru">
+                <span class="trip-item-icon">🇮🇳</span>
+                <div class="trip-item-details">
+                  <div class="trip-item-title-row">
+                    <strong class="trip-item-title">Bengaluru Garden & Tech City</strong>
+                    <span class="trip-item-badge">5 stops</span>
+                  </div>
+                  <span class="trip-item-desc">Lalbagh, Cubbon Park, Palace, Indiranagar</span>
+                </div>
+              </button>
+
+              <button type="button" class="trips-menu-item" data-trip-key="vellore">
+                <span class="trip-item-icon">🇮🇳</span>
+                <div class="trip-item-details">
+                  <div class="trip-item-title-row">
+                    <strong class="trip-item-title">Vellore Heritage Tour (VIT Campus)</strong>
+                    <span class="trip-item-badge">4 stops</span>
+                  </div>
+                  <span class="trip-item-desc">VIT University, Vellore Fort, Sripuram Golden Temple</span>
+                </div>
+              </button>
+
+              <button type="button" class="trips-menu-item active" data-trip-key="paris">
+                <span class="trip-item-icon">🗼</span>
+                <div class="trip-item-details">
+                  <div class="trip-item-title-row">
+                    <strong class="trip-item-title">Paris Heritage & Museums</strong>
+                    <span class="trip-item-badge">5 stops</span>
+                  </div>
+                  <span class="trip-item-desc">Eiffel Tower, Louvre, Notre-Dame, Montmartre</span>
+                </div>
+              </button>
+
+              <button type="button" class="trips-menu-item" data-trip-key="san_francisco">
+                <span class="trip-item-icon">🌉</span>
+                <div class="trip-item-details">
+                  <div class="trip-item-title-row">
+                    <strong class="trip-item-title">San Francisco Highlights</strong>
+                    <span class="trip-item-badge">5 stops</span>
+                  </div>
+                  <span class="trip-item-desc">Ferry Building, Pier 39, Golden Gate Vista, Twin Peaks</span>
+                </div>
+              </button>
+
+              <button type="button" class="trips-menu-item" data-trip-key="conflict_demo">
+                <span class="trip-item-icon">⚡</span>
+                <div class="trip-item-details">
+                  <div class="trip-item-title-row">
+                    <strong class="trip-item-title">Schedule Conflict Demo</strong>
+                    <span class="trip-item-badge badge-warning">Conflict Test</span>
+                  </div>
+                  <span class="trip-item-desc">Shows impossible window detection & AI remedies</span>
+                </div>
+              </button>
+            </div>
+
+            <div class="dropdown-divider"></div>
+
+            <!-- Saved Trips Section -->
+            <div class="trips-menu-header">
+              <span class="dropdown-group-title">Saved Trips (SQLite Database)</span>
+              <span id="savedTripsCountBadge" class="trips-badge-pill">0</span>
+            </div>
+            <div id="savedTripsDynamicList" class="trips-menu-list">
+              <div class="trips-empty-hint">No saved trips yet. Click "Save" in header to store one.</div>
+            </div>
+
+            <div class="dropdown-divider"></div>
+            <div class="trips-menu-footer">
+              <button type="button" id="btnNewTrip" class="btn-menu-action">
+                <span>✨</span> New Empty Trip
+              </button>
+            </div>
+
+            <!-- Compatibility select elements (hidden) -->
+            <div style="display:none;" aria-hidden="true">
+              <select id="sampleTripSelect">
+                <option value="paris">Paris</option>
+                <option value="san_francisco">SF</option>
+                <option value="delhi">Delhi</option>
+                <option value="mumbai">Mumbai</option>
+                <option value="bengaluru">Bengaluru</option>
+                <option value="vellore">Vellore</option>
+                <option value="conflict_demo">Conflict</option>
+              </select>
+              <select id="savedTripsSelect"><option value="">Saved</option></select>
+            </div>
+          </div>
+        </div>
+
+        <button type="button" id="btnSaveTripModal" class="btn btn-secondary btn-sm" title="Save trip to database">
+          <span class="btn-icon">💾</span> <span>Save</span>
+        </button>
+
+        <!-- Export Dropdown -->
+        <div class="dropdown-wrapper">
+          <button type="button" id="btnExportMenu" class="btn btn-secondary btn-sm" title="Export itinerary to external apps & files">
+            <span class="btn-icon">⬇</span> <span>Export</span> <span class="arrow-down">▾</span>
+          </button>
+          <div id="exportDropdownMenu" class="dropdown-menu hidden">
+            <button type="button" id="btnTripSummaryModal" class="dropdown-menu-item btn-clean-item" title="Print itinerary">
+              <span class="dropdown-menu-icon">🖨️</span>
+              <div class="dropdown-menu-info">
+                <strong>Print / PDF</strong>
+                <small>Formatted printable itinerary</small>
+              </div>
+            </button>
+            <a href="/api/export/gpx" download="routeflow-itinerary.gpx" class="dropdown-menu-item">
+              <span class="dropdown-menu-icon">🗺️</span>
+              <div class="dropdown-menu-info">
+                <strong>GPX File</strong>
+                <small>GPS, Apple Maps, Garmin</small>
+              </div>
+            </a>
+            <a href="/api/export/geojson" download="routeflow-itinerary.geojson" class="dropdown-menu-item">
+              <span class="dropdown-menu-icon">🌐</span>
+              <div class="dropdown-menu-info">
+                <strong>GeoJSON</strong>
+                <small>Mapbox, GIS, QGIS</small>
+              </div>
+            </a>
+            <a href="/api/export/json" download="routeflow-itinerary.json" class="dropdown-menu-item">
+              <span class="dropdown-menu-icon">📄</span>
+              <div class="dropdown-menu-info">
+                <strong>JSON Data</strong>
+                <small>Full itinerary backup</small>
+              </div>
+            </a>
+          </div>
+        </div>
+
+        <button type="button" id="btnOptimize" class="btn btn-primary btn-sm btn-optimize" title="Re-calculate optimal route">
+          <span class="btn-icon">⚡</span> <span>Optimize Route</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="main-body">
+      <!-- Left Panel: Intuitive Trip Planner Sidebar -->
+      <aside class="sidebar">
+        <!-- Strategy Objective Bar -->
+        <div class="strategy-section">
+          <div class="strategy-header">
+            <span class="strategy-label">Optimization Priority</span>
+          </div>
+          <nav class="strategy-selector" aria-label="Route Strategy">
+            <button type="button" class="strategy-btn active" data-preset="BALANCED">Balanced</button>
+            <button type="button" class="strategy-btn" data-preset="FASTEST">Fastest</button>
+            <button type="button" class="strategy-btn" data-preset="CROWD_AVOIDER">Low Crowd</button>
+            <button type="button" class="strategy-btn" data-preset="SCENIC_EXPLORER">Scenic</button>
+            <button type="button" class="strategy-btn" id="btnToggleWeightTuner" data-preset="CUSTOM" title="Fine-tune scoring weights">⚙ Custom</button>
+          </nav>
+        </div>
+
+        <!-- Weight Tuner Drawer (collapsible) -->
+        <div id="weightTunerDrawer" class="weight-tuner-drawer hidden">
+          <div class="weight-tuner-inner">
+            <div class="weight-tuner-header">
+              <div>
+                <span class="weight-tuner-title">Scoring Weights</span>
+                <span class="weight-tuner-sub">Auto-normalizes to 100%</span>
+              </div>
+              <div class="weight-tuner-actions">
+                <button id="btnResetWeights" class="btn btn-xs btn-ghost">Reset</button>
+                <button id="btnApplyWeights" class="btn btn-xs btn-primary">Apply</button>
+              </div>
+            </div>
+            <div class="weight-sliders-grid">
+              <!-- Travel Time -->
+              <div class="weight-slider-item">
+                <div class="weight-slider-top">
+                  <span class="weight-slider-icon">⏱</span>
+                  <span class="weight-slider-label">Travel Time</span>
+                  <span class="weight-slider-val" id="valTravelTime">25%</span>
+                </div>
+                <input type="range" id="sliderTravelTime" class="weight-range" min="0" max="100" value="25" data-key="travelTime">
+              </div>
+              <!-- Time Window Fit -->
+              <div class="weight-slider-item">
+                <div class="weight-slider-top">
+                  <span class="weight-slider-icon">🕐</span>
+                  <span class="weight-slider-label">Window Fit</span>
+                  <span class="weight-slider-val" id="valTimeWindowFit">20%</span>
+                </div>
+                <input type="range" id="sliderTimeWindowFit" class="weight-range" min="0" max="100" value="20" data-key="timeWindowFit">
+              </div>
+              <!-- Crowd Avoidance -->
+              <div class="weight-slider-item">
+                <div class="weight-slider-top">
+                  <span class="weight-slider-icon">👥</span>
+                  <span class="weight-slider-label">Crowds</span>
+                  <span class="weight-slider-val" id="valCrowdAvoidance">20%</span>
+                </div>
+                <input type="range" id="sliderCrowdAvoidance" class="weight-range" min="0" max="100" value="20" data-key="crowdAvoidance">
+              </div>
+              <!-- Scenic -->
+              <div class="weight-slider-item">
+                <div class="weight-slider-top">
+                  <span class="weight-slider-icon">🌳</span>
+                  <span class="weight-slider-label">Scenic</span>
+                  <span class="weight-slider-val" id="valScenic">15%</span>
+                </div>
+                <input type="range" id="sliderScenic" class="weight-range" min="0" max="100" value="15" data-key="scenic">
+              </div>
+              <!-- Attractions Open -->
+              <div class="weight-slider-item">
+                <div class="weight-slider-top">
+                  <span class="weight-slider-icon">🏛</span>
+                  <span class="weight-slider-label">Venues Open</span>
+                  <span class="weight-slider-val" id="valAttractionsOpen">20%</span>
+                </div>
+                <input type="range" id="sliderAttractionsOpen" class="weight-range" min="0" max="100" value="20" data-key="attractionsOpen">
+              </div>
+              <!-- Must Visit -->
+              <div class="weight-slider-item">
+                <div class="weight-slider-top">
+                  <span class="weight-slider-icon">⭐</span>
+                  <span class="weight-slider-label">Must-Visit</span>
+                  <span class="weight-slider-val" id="valMustVisit">0%</span>
+                </div>
+                <input type="range" id="sliderMustVisit" class="weight-range" min="0" max="100" value="0" data-key="mustVisit">
+              </div>
+            </div>
+            <!-- Normalized total bar -->
+            <div class="weight-total-bar">
+              <span class="weight-total-label">Total Weight</span>
+              <div class="weight-total-track">
+                <div class="weight-total-segments" id="weightTotalSegments"></div>
+              </div>
+              <span class="weight-total-pct" id="weightTotalPct">100%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sidebar Navigation Tabs -->
+        <div class="sidebar-tab-nav">
+          <button type="button" class="tab-link active" data-tab="tabDestinations">
+            <span>📍 Stops</span>
+          </button>
+          <button type="button" class="tab-link" data-tab="tabTimeline">
+            <span>⏱️ Timeline</span>
+          </button>
+          <button type="button" class="tab-link" data-tab="tabAnalytics">
+            <span>📊 Insights</span>
+          </button>
+          <button type="button" class="tab-link" data-tab="tabSettings">
+            <span>⚙️ Config</span>
+          </button>
+        </div>
+
+        <!-- Tab 1: Destinations (Default view) -->
+        <div id="tabDestinations" class="tab-pane active sidebar-tab-content">
+          <!-- Quick Trip Time & Route Mode Bar -->
+          <div class="quick-config-bar">
+            <div class="quick-field">
+              <span class="quick-label">Depart</span>
+              <input type="time" id="quickStartTime" value="09:00" class="input-quick-time">
+            </div>
+            <div class="quick-divider"></div>
+            <div class="quick-field flex-1">
+              <button type="button" id="btnToggleRoundTrip" class="route-mode-pill" title="Toggle Round-Trip (Return to Origin)">
+                <span id="roundTripIcon" class="mode-icon">➜</span>
+                <span id="roundTripLabel" class="mode-text">One-Way</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Search bar -->
+          <div class="search-section">
+            <div class="search-input-wrapper">
+              <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              <input type="text" id="placeSearchInput" placeholder="Search place or click map to add..." class="search-input">
+            </div>
+            <div id="placeSearchResults" class="search-dropdown hidden"></div>
+          </div>
+
+          <!-- Destinations Header -->
+          <div class="section-header">
+            <div class="section-header-left">
+              <span class="section-title">Destinations</span>
+              <span class="count-pill" id="stopsCountBadge">5 stops</span>
+            </div>
+            <button type="button" id="btnOpenAddStop" class="btn-text">+ Custom Stop</button>
+          </div>
+
+          <!-- Inline Add Stop Form (Collapsed by default) -->
+          <div id="addStopForm" class="add-stop-panel hidden">
+            <input type="text" id="newStopName" placeholder="Destination Name (e.g. Louvre Museum)" class="form-input mb-2">
+            <div class="form-grid-2 mb-2">
+              <input type="number" step="any" id="newStopLat" placeholder="Latitude" class="form-input">
+              <input type="number" step="any" id="newStopLon" placeholder="Longitude" class="form-input">
+            </div>
+            <div class="form-grid-3 mb-2">
+              <div>
+                <label class="form-label-xs">Dwell (min)</label>
+                <input type="number" id="newStopDwell" value="45" class="form-input">
+              </div>
+              <div>
+                <label class="form-label-xs">Open Window</label>
+                <input type="time" id="newStopPrefStart" class="form-input">
+              </div>
+              <div>
+                <label class="form-label-xs">Close Window</label>
+                <input type="time" id="newStopPrefEnd" class="form-input">
+              </div>
+            </div>
+            <div class="flex-between">
+              <label class="checkbox-label">
+                <input type="checkbox" id="newStopMustVisit" checked> Must-Visit Stop
+              </label>
+              <div>
+                <button type="button" id="btnCancelAddStop" class="btn btn-xs btn-ghost">Cancel</button>
+                <button type="button" id="btnSaveNewStop" class="btn btn-xs btn-primary">Add Stop</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Destinations List -->
+          <div id="stopsList" class="stops-scrollable">
+            <!-- Populated by JavaScript -->
+          </div>
+        </div>
+
+        <!-- Tab 2: Turn-by-Turn Timeline Schedule -->
+        <div id="tabTimeline" class="tab-pane sidebar-tab-content">
+          <div id="reorderingNotice" class="notice-box hidden">
+            <span id="reorderingText"></span>
+          </div>
+          <div id="timelineList" class="timeline-schedule">
+            <!-- Rendered timeline cards -->
+          </div>
+        </div>
+
+        <!-- Tab 3: Analytics & Strategy Comparisons -->
+        <div id="tabAnalytics" class="tab-pane sidebar-tab-content">
+          <div class="sidebar-sub-section">
+            <h4 class="sidebar-sub-title">Strategy Comparison</h4>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Strategy</th>
+                    <th>Distance</th>
+                    <th>Duration</th>
+                    <th>Feasibility</th>
+                    <th>Sequence</th>
+                  </tr>
+                </thead>
+                <tbody id="presetComparisonTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="sidebar-sub-section mt-3">
+            <h4 class="sidebar-sub-title">Scoring Factor Breakdown</h4>
+            <div class="factors-layout" id="factorsContainer"></div>
+          </div>
+
+          <div class="sidebar-sub-section mt-3">
+            <h4 class="sidebar-sub-title">Constraint Audit</h4>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Stop</th>
+                    <th>Type</th>
+                    <th>Rule</th>
+                    <th>Status</th>
+                    <th>Details</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="constraintTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 4: Settings & Mode -->
+        <div id="tabSettings" class="tab-pane sidebar-tab-content">
+          <div class="trip-config-card">
+            <h4 class="sidebar-sub-title mb-2">Trip Departure & Origin</h4>
+            <div class="trip-config-row">
+              <div class="trip-config-field">
+                <label for="startTimeInput" class="field-label">Departure</label>
+                <input type="time" id="startTimeInput" value="09:00" class="input-minimal time-input">
+              </div>
+              <div class="trip-config-field flex-1">
+                <label class="field-label">Route Mode</label>
+                <button type="button" id="btnToggleRoundTrip" class="route-mode-pill" title="Toggle Round-Trip (Return to Origin)">
+                  <span id="roundTripIcon" class="mode-icon">➜</span>
+                  <span id="roundTripLabel" class="mode-text">One-Way</span>
+                </button>
+              </div>
+            </div>
+            <div class="trip-config-row">
+              <div class="trip-config-field flex-1">
+                <label for="startCoordsInput" class="field-label">Origin Location</label>
+                <div class="input-with-button">
+                  <input type="text" id="startCoordsInput" value="48.8584, 2.2945" class="input-minimal text-input" placeholder="lat, lon">
+                  <button type="button" id="btnUpdateTripConfig" class="btn-input-action" title="Apply trip settings">Update</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="trip-config-card mt-3">
+            <h4 class="sidebar-sub-title mb-2">Map Tile Theme & Provider</h4>
+            <div class="trip-config-field mb-2">
+              <label for="mapProviderSelect" class="field-label">Tile Source</label>
+              <select id="mapProviderSelect" class="form-select select-clean">
+                <option value="auto">Auto (Theme-matched, 100% Free)</option>
+                <option value="esri_dark">Esri Dark Canvas (Sleek Dark, No Key)</option>
+                <option value="osm">Standard OpenStreetMap (No Key)</option>
+                <option value="osm_dark">OpenStreetMap Dark-Filtered (No Key)</option>
+                <option value="esri_light">Esri Light Canvas (Crisp Light, No Key)</option>
+                <option value="hot">Humanitarian OSM (High Contrast, No Key)</option>
+                <option value="custom">Custom Tile URL or Mapbox Token (Optional)</option>
+              </select>
+            </div>
+            <div id="customApiKeyRow" class="trip-config-field hidden mb-2">
+              <label for="mapApiKeyInput" class="field-label">Custom Tile URL or Token (Optional)</label>
+              <input type="text" id="mapApiKeyInput" placeholder="Mapbox token (pk.ey...) or tile URL template" class="input-minimal">
+              <span style="font-size:0.65rem; color:var(--text-muted); margin-top:3px;">
+                Optional: Enter a custom tile URL template or Mapbox token. Not required!
+              </span>
+            </div>
+            <div class="map-key-status" style="margin-top:4px;">
+              <span class="status-badge-free">✓ 100% Free & Open-Source — No API Key Required</span>
+            </div>
+          </div>
+
+          <div class="sidebar-sub-section mt-3">
+            <h4 class="sidebar-sub-title">What-If Simulation Sandbox</h4>
+            <div class="sandbox-controls">
+              <label for="whatIfRemoveSelect">Remove stop:</label>
+              <select id="whatIfRemoveSelect" class="form-select select-sm"></select>
+              <button type="button" id="btnRunWhatIf" class="btn btn-sm btn-secondary">Simulate</button>
+            </div>
+            <div id="whatIfResultBox" class="sandbox-output hidden"></div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Right Panel: Full-Height Interactive Map with Floating Overlays -->
+      <section class="main-content">
+        <!-- Stacked Floating Alerts Container -->
+        <div class="map-alerts-container">
+          <!-- Floating Live Optimization Banner -->
+          <div id="optimizationSavingsBanner" class="metrics-banner hidden">
+            <span class="badge-saved">Optimized</span>
+            <span id="savingsText">Route sequencing saved 4.2 km (24%) and ~18 min compared to manual order.</span>
+          </div>
+
+          <!-- Floating Conflict Alert Banner -->
+          <div id="conflictAlertBanner" class="conflict-alert hidden">
+            <div class="conflict-title">⚠️ Schedule Conflict Detected</div>
+            <div id="conflictRemediesList" class="conflict-remedy-items"></div>
+          </div>
+        </div>
+
+        <!-- Full-Height Map Container -->
+        <div class="map-container">
+          <div id="map" class="map-view"></div>
+          <div class="map-overlay-tools">
+            <button type="button" id="btnFitMap" class="btn-map-control" title="Center All Stops">Recenter</button>
+          </div>
+          <div class="map-hint">Click on map to drop a waypoint pin • Fully Interactive</div>
+
+          <!-- Floating Stats Ribbon (Pinned directly on the map viewport!) -->
+          <div class="floating-stats-bar stats-bar">
+            <div class="stat-card">
+              <div class="stat-icon-wrapper stat-icon-blue">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+              </div>
+              <div class="stat-text">
+                <span class="stat-label">Distance</span>
+                <span class="stat-value" id="metricDistance">-- km</span>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon-wrapper stat-icon-indigo">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              </div>
+              <div class="stat-text">
+                <span class="stat-label">Duration</span>
+                <span class="stat-value" id="metricDuration">-- min</span>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon-wrapper stat-icon-amber">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+              </div>
+              <div class="stat-text">
+                <span class="stat-label">Crowd</span>
+                <span class="stat-value" id="metricCrowd">--%</span>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon-wrapper stat-icon-emerald">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              </div>
+              <div class="stat-text">
+                <span class="stat-label">Constraints</span>
+                <span class="status-indicator-green" id="metricFeasibility">100% Satisfied</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Modal: Save Trip -->
+  <div id="saveTripModal" class="modal-backdrop hidden">
+    <div class="modal-box">
+      <div class="modal-top">
+        <h3>Save Trip</h3>
+        <button class="btn-close" id="btnCloseSaveModal">×</button>
+      </div>
+      <div class="modal-content">
+        <label for="saveTripName" class="form-label-xs">Trip Name</label>
+        <input type="text" id="saveTripName" placeholder="e.g. Paris Highlights" class="form-input mb-2">
+        <label for="saveTripDesc" class="form-label-xs">Notes (optional)</label>
+        <textarea id="saveTripDesc" rows="2" class="form-input" placeholder="Trip notes..."></textarea>
+      </div>
+      <div class="modal-bottom">
+        <button id="btnCancelSave" class="btn btn-sm btn-ghost">Cancel</button>
+        <button id="btnConfirmSave" class="btn btn-sm btn-primary">Save to SQLite</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Print / Complete Itinerary -->
+  <div id="tripSummaryModal" class="modal-backdrop hidden">
+    <div class="modal-box modal-box-lg">
+      <div class="modal-top">
+        <h3 id="summaryModalTitle">Complete Trip Itinerary</h3>
+        <div>
+          <button id="btnPrintSummary" class="btn btn-sm btn-secondary">Print</button>
+          <button class="btn-close" id="btnCloseSummaryModal">×</button>
+        </div>
+      </div>
+      <div class="modal-content printable-area" id="summaryModalBody"></div>
+    </div>
+  </div>
+
+  <!-- Modal: Attach Constraint to Stop -->
+  <div id="constraintModal" class="modal-backdrop hidden">
+    <div class="modal-box">
+      <div class="modal-top">
+        <h3 id="constraintModalTitle">Add Constraint</h3>
+        <button class="btn-close" id="btnCloseConstraintModal">×</button>
+      </div>
+      <div class="modal-content">
+        <input type="hidden" id="constraintStopId">
+        <label for="constraintTypeSelect" class="form-label-xs">Constraint Type</label>
+        <select id="constraintTypeSelect" class="form-select mb-2">
+          <option value="OPENING_HOURS">Opening & Closing Hours (HARD)</option>
+          <option value="PRECEDENCE">Precedence Rule (Visit before another stop)</option>
+        </select>
+
+        <div id="ohFields" class="form-grid-2 mb-2">
+          <div>
+            <label class="form-label-xs">Open Time (HH:mm)</label>
+            <input type="time" id="ohOpenTime" value="09:00" class="form-input">
+          </div>
+          <div>
+            <label class="form-label-xs">Close Time (HH:mm)</label>
+            <input type="time" id="ohCloseTime" value="18:00" class="form-input">
+          </div>
+        </div>
+
+        <div id="precFields" class="mb-2 hidden">
+          <label class="form-label-xs">Must be visited BEFORE:</label>
+          <select id="precTargetStopSelect" class="form-select"></select>
+        </div>
+      </div>
+      <div class="modal-bottom">
+        <button id="btnCancelConstraint" class="btn btn-sm btn-ghost">Cancel</button>
+        <button id="btnSaveConstraint" class="btn btn-sm btn-primary">Attach Constraint</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Edit Destination -->
+  <div id="editStopModal" class="modal-backdrop hidden">
+    <div class="modal-box">
+      <div class="modal-top">
+        <h3 id="editStopModalTitle">Edit Destination</h3>
+        <button class="btn-close" id="btnCloseEditStopModal">×</button>
+      </div>
+      <div class="modal-content">
+        <input type="hidden" id="editStopId">
+        <label for="editStopName" class="form-label-xs">Destination Name</label>
+        <input type="text" id="editStopName" class="form-input mb-2">
+
+        <div class="form-grid-3 mb-2">
+          <div>
+            <label for="editStopDwell" class="form-label-xs">Dwell (min)</label>
+            <input type="number" id="editStopDwell" class="form-input" min="5" step="5">
+          </div>
+          <div>
+            <label for="editStopPrefStart" class="form-label-xs">Pref Start</label>
+            <input type="time" id="editStopPrefStart" class="form-input">
+          </div>
+          <div>
+            <label for="editStopPrefEnd" class="form-label-xs">Pref End</label>
+            <input type="time" id="editStopPrefEnd" class="form-input">
+          </div>
+        </div>
+
+        <label class="checkbox-label mb-2">
+          <input type="checkbox" id="editStopMustVisit"> Must-Visit (Priority Attraction)
+        </label>
+
+        <div class="edit-modal-constraints-row">
+          <span class="form-label-xs" style="margin-bottom:0;">Rules & Constraints</span>
+          <button type="button" id="btnOpenConstraintFromEdit" class="btn btn-xs btn-secondary">+ Add Constraint Rule</button>
+        </div>
+      </div>
+      <div class="modal-bottom">
+        <button id="btnCancelEditStop" class="btn btn-sm btn-ghost">Cancel</button>
+        <button id="btnSaveEditStop" class="btn btn-sm btn-primary">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <!-- Local Leaflet Script -->
+  <script src="/vendor/leaflet/leaflet.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

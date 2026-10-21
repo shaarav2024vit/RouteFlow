@@ -80,14 +80,18 @@ class StopManager extends EventEmitter {
    * @param {string} startTime e.g. "09:00"
    * @param {number} startLat
    * @param {number} startLon
+   * @param {boolean} [roundTrip=false]
    */
-  setTripConfig(startTime, startLat, startLon) {
+  setTripConfig(startTime, startLat, startLon, roundTrip) {
     validateCoordinate(startLat, startLon);
     this.tripConfig = {
       startTime,
       startLat,
       startLon,
     };
+    if (roundTrip !== undefined) {
+      this.tripConfig.roundTrip = Boolean(roundTrip);
+    }
     this.emit('stopsChanged', { type: 'TRIP_CONFIG_UPDATED' });
   }
 
@@ -115,6 +119,17 @@ class StopManager extends EventEmitter {
 
     this.getStop(stopId).constraints.push(constraint);
     this.emit('stopsChanged', { type: 'CONSTRAINT_ADDED', stopId });
+  }
+
+  /**
+   * Removes a constraint from a stop
+   * @param {string} stopId
+   * @param {string} constraintId
+   */
+  removeConstraint(stopId, constraintId) {
+    const stop = this.getStop(stopId);
+    stop.constraints = (stop.constraints || []).filter((c) => c.id !== constraintId);
+    this.emit('stopsChanged', { type: 'CONSTRAINT_REMOVED', stopId });
   }
 
   /**
