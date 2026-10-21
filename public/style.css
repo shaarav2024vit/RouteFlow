@@ -42,37 +42,37 @@
 }
 
 [data-theme="light"] {
-  /* ─── Modern Crisp Porcelain Theme (Light Mode) ───────────────────────── */
-  --bg-app:        #f8fafc;
+  /* ─── Premium Porcelain + Violet Theme (Light Mode) ───────────────────── */
+  --bg-app:        #faf9ff;
   --bg-sidebar:    #ffffff;
   --bg-card:       #ffffff;
-  --bg-card-hover: #f1f5f9;
-  --bg-surface:    #f8fafc;
-  --bg-input:      #f8fafc;
+  --bg-card-hover: #f3f0ff;
+  --bg-surface:    #faf9ff;
+  --bg-input:      #faf9ff;
 
-  --border-subtle: #e2e8f0;
-  --border-medium: #cbd5e1;
-  --border-active: #2563eb;
+  --border-subtle: #ede9fe;
+  --border-medium: #c4b5fd;
+  --border-active: #7c3aed;
 
-  --text-primary:   #0f172a;
-  --text-secondary: #475569;
-  --text-muted:     #94a3b8;
+  --text-primary:   #0f0a1e;
+  --text-secondary: #4c3d6b;
+  --text-muted:     #9c8cc0;
 
-  --accent-blue:        #2563eb;
-  --accent-blue-hover:  #1d4ed8;
-  --accent-blue-glow:   rgba(37, 99, 235, 0.2);
+  --accent-blue:        #7c3aed;
+  --accent-blue-hover:  #6d28d9;
+  --accent-blue-glow:   rgba(124, 58, 237, 0.22);
   --accent-cyan:        #0891b2;
-  --accent-indigo:      #6366f1;
+  --accent-indigo:      #4f46e5;
   --accent-green:       #059669;
   --accent-emerald:     #059669;
   --accent-amber:       #d97706;
   --accent-rose:        #e11d48;
 
-  --shadow-sm:         0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-card:       0 1px 3px rgba(0, 0, 0, 0.06), 0 0 0 1px #e2e8f0;
-  --shadow-card-hover: 0 8px 20px rgba(0, 0, 0, 0.08), 0 0 0 1px #2563eb;
-  --shadow-floating:   0 12px 32px rgba(0, 0, 0, 0.12), 0 0 0 1px #e2e8f0;
-  --shadow-dropdown:   0 10px 25px rgba(0, 0, 0, 0.12), 0 0 0 1px #e2e8f0;
+  --shadow-sm:         0 1px 2px rgba(109, 40, 217, 0.06);
+  --shadow-card:       0 1px 3px rgba(109, 40, 217, 0.07), 0 0 0 1px #ede9fe;
+  --shadow-card-hover: 0 8px 24px rgba(124, 58, 237, 0.15), 0 0 0 1px #7c3aed;
+  --shadow-floating:   0 12px 32px rgba(109, 40, 217, 0.14), 0 0 0 1px #ede9fe;
+  --shadow-dropdown:   0 10px 28px rgba(109, 40, 217, 0.14), 0 0 0 1px #ede9fe;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
