@@ -795,4 +795,10 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, stopManager, controller, loadSampleTrip };
+// Vercel serverless: default export must be the handler function
+module.exports = app;
+// Named exports for tests
+module.exports.app = app;
+module.exports.stopManager = stopManager;
+module.exports.controller = controller;
+module.exports.loadSampleTrip = loadSampleTrip;
